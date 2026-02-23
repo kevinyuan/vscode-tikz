@@ -1,8 +1,8 @@
 {
   "name": "vscode-tikzjax",
-  "displayName": "TikZJax",
+  "displayName": "TikZ in Markdown",
   "description": "Render LaTeX and TikZ diagrams in Markdown files using TikZJax",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "kevinyuan",
   "icon": "icon.png",
   "author": {

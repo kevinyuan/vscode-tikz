@@ -1,0 +1,65 @@
+/* TikZ diagram styles for VS Code built-in Markdown preview */
+
+.tikz-diagram {
+    margin: 1.5em 0;
+    padding: 16px;
+    border: 1px solid var(--vscode-panel-border, rgba(128, 128, 128, 0.35));
+    border-radius: 6px;
+    text-align: center;
+    background: var(--vscode-editor-background, transparent);
+}
+
+.tikz-diagram svg {
+    max-width: 100%;
+    height: auto;
+}
+
+/* Loading state */
+.tikz-loading {
+    color: var(--vscode-descriptionForeground, #888);
+    padding: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+}
+
+.tikz-spinner {
+    display: inline-block;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--vscode-progressBar-background, #0078d4);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: tikz-spin 1s linear infinite;
+}
+
+@keyframes tikz-spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+/* Error state */
+.tikz-error {
+    text-align: left;
+    background: var(--vscode-inputValidation-errorBackground, rgba(255, 0, 0, 0.1));
+    border-color: var(--vscode-inputValidation-errorBorder, #be1100);
+    color: var(--vscode-errorForeground, #f48771);
+}
+
+.tikz-error-title {
+    font-weight: bold;
+    margin-bottom: 8px;
+}
+
+.tikz-error-message {
+    font-family: var(--vscode-editor-font-family, monospace);
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-word;
+    padding: 8px;
+    background: var(--vscode-textCodeBlock-background, rgba(128, 128, 128, 0.1));
+    border-radius: 3px;
+    margin: 0;
+}

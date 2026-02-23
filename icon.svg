@@ -1,0 +1,41 @@
+<svg width="128" height="128" viewBox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+  <!-- Gradient background -->
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#4A90E2;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#357ABD;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Rounded square background -->
+  <rect width="128" height="128" rx="24" fill="url(#bg)"/>
+  
+  <!-- Circle outline around MOSFET -->
+  <circle cx="64" cy="64" r="42" stroke="white" stroke-width="2.5" fill="none" opacity="0.3"/>
+  
+  <!-- Enhanced MOSFET symbol (centered, modern style) -->
+  <g stroke="white" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+    <!-- Gate terminal with rounded end -->
+    <line x1="30" y1="64" x2="48" y2="64"/>
+    <circle cx="30" cy="64" r="2" fill="white"/>
+    
+    <!-- Gate plate (shorter) -->
+    <line x1="48" y1="52" x2="48" y2="76" stroke-width="4"/>
+    
+    <!-- Drain terminal (top horizontal line) -->
+    <line x1="80" y1="35" x2="80" y2="48"/>
+    <circle cx="80" cy="35" r="2" fill="white"/>
+    <line x1="62" y1="48" x2="80" y2="48"/>
+    
+    <!-- Source terminal (bottom horizontal line) -->
+    <line x1="80" y1="93" x2="80" y2="80"/>
+    <circle cx="80" cy="93" r="2" fill="white"/>
+    <line x1="62" y1="80" x2="80" y2="80"/>
+    
+    <!-- Channel - single solid vertical line (longer) -->
+    <line x1="62" y1="42" x2="62" y2="86" stroke-width="3.5"/>
+    
+    <!-- Arrow on bottom horizontal line (larger) -->
+    <path d="M 71 80 L 76 76 L 76 84 Z" fill="white" stroke="none"/>
+  </g>
+</svg>

@@ -1,0 +1,154 @@
+{
+  "name": "vscode-tikzjax",
+  "displayName": "TikZJax",
+  "description": "Render LaTeX and TikZ diagrams in Markdown files using TikZJax",
+  "version": "0.2.0",
+  "publisher": "kevinyuan",
+  "icon": "icon.png",
+  "author": {
+    "name": "Kevin Yuan"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kevinyuan/vscode-tikz"
+  },
+  "bugs": {
+    "url": "https://github.com/kevinyuan/vscode-tikz/issues"
+  },
+  "homepage": "https://github.com/kevinyuan/vscode-tikz#readme",
+  "keywords": [
+    "tikz",
+    "latex",
+    "markdown",
+    "diagram",
+    "visualization",
+    "math",
+    "tikzjax",
+    "svg",
+    "preview",
+    "render"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Visualization",
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:markdown"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "markdown.markdownItPlugins": true,
+    "markdown.previewStyles": [
+      "./media/tikz-preview.css"
+    ],
+    "grammars": [
+      {
+        "scopeName": "markdown.tikz.codeblock",
+        "path": "./syntaxes/tikz-injection.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.tikz": "latex"
+        }
+      }
+    ],
+    "commands": [
+      {
+        "command": "tikzjax.openPreview",
+        "title": "Open TikZ Preview",
+        "category": "TikZJax",
+        "when": "editorLangId == markdown"
+      },
+      {
+        "command": "tikzjax.refreshDiagrams",
+        "title": "Refresh TikZ Diagrams",
+        "category": "TikZJax",
+        "when": "editorLangId == markdown"
+      },
+      {
+        "command": "tikzjax.clearCache",
+        "title": "Clear TikZ Cache",
+        "category": "TikZJax",
+        "when": "editorLangId == markdown"
+      },
+      {
+        "command": "tikzjax.resetEngine",
+        "title": "Reset TikZJax Engine",
+        "category": "TikZJax",
+        "when": "editorLangId == markdown"
+      }
+    ],
+    "configuration": {
+      "title": "TikZJax",
+      "properties": {
+        "tikzjax.invertColorsInDarkMode": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically invert diagram colors when using a dark theme"
+        },
+        "tikzjax.renderTimeout": {
+          "type": "number",
+          "default": 15000,
+          "minimum": 1000,
+          "maximum": 60000,
+          "description": "Maximum time (in milliseconds) to wait for a diagram to render before timing out"
+        },
+        "tikzjax.autoPreview": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically open preview panel when opening a Markdown file with TikZ diagrams"
+        },
+        "tikzjax.previewPosition": {
+          "type": "string",
+          "enum": [
+            "side",
+            "below",
+            "window"
+          ],
+          "default": "side",
+          "enumDescriptions": [
+            "Open preview beside the editor",
+            "Open preview below the editor",
+            "Open preview in a separate window"
+          ],
+          "description": "Default position for the preview panel"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint src --ext ts"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.10.0",
+    "@types/vscode": "^1.85.0",
+    "@typescript-eslint/eslint-plugin": "^6.13.0",
+    "@typescript-eslint/parser": "^6.13.0",
+    "eslint": "^8.54.0",
+    "fast-check": "^4.5.3",
+    "jest": "^30.2.0",
+    "sharp": "^0.34.5",
+    "ts-jest": "^29.4.6",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "localforage": "^1.10.0",
+    "node-tikzjax": "^1.0.5",
+    "svgo": "^3.0.5",
+    "tslib": "^2.8.1"
+  }
+}

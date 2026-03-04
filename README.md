@@ -295,6 +295,24 @@ Default position for the preview panel:
 }
 ```
 
+## Exporting Marp Slides with TikZ (CLI)
+
+The VS Code extension only renders TikZ in the editor preview. To export Marp slide decks containing TikZ diagrams to PPTX/PDF, use the bundled `marp-tikz.js` script which pre-renders TikZ blocks to SVG before invoking marp-cli:
+
+```bash
+# From the extension's directory
+node marp-tikz.js slides.md -- --pptx --allow-local-files --html
+node marp-tikz.js slides.md -- --pdf --allow-local-files --html
+```
+
+This will:
+1. Find all ` ```tikz ` code blocks in the Markdown file
+2. Render each to SVG using `node-tikzjax`
+3. Replace the code blocks with `<img>` tags referencing the rendered SVGs
+4. Run `marp-cli` to produce the final output
+
+The output file is saved next to the input (e.g., `slides.pptx`).
+
 ## Tips and Tricks
 
 ### Multiple Diagrams

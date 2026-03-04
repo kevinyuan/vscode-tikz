@@ -1,9 +1,14 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
+import * as fs from 'fs';
+import * as os from 'os';
+import { execFile } from 'child_process';
 import { DocumentParser } from './core/DocumentParser';
 import { CacheManager } from './core/CacheManager';
 import { ConfigurationManager } from './config/ConfigurationManager';
 import { PreviewManager } from './preview/PreviewManager';
 import { generateHash } from './utils/hash';
+import { preprocessSource } from './utils/preprocessor';
 
 let previewManager: PreviewManager | undefined;
 let configManager: ConfigurationManager | undefined;
@@ -261,17 +266,49 @@ function registerCommands(context: vscode.ExtensionContext): void {
       if (!previewManager) { return; }
       await previewManager.resetEngine();
       vscode.window.setStatusBarMessage('$(debug-restart) TikZJax engine reset', 3000);
+    }),
+
+    vscode.commands.registerCommand('tikzjax.exportMarpPptx', async () => {
+      const editor = vscode.window.activeTextEditor;
+      const doc = (editor && editor.document.languageId === 'markdown')
+        ? editor.document
+        : findMarkdownDocument();
+      if (!doc) {
+        vscode.window.showWarningMessage('Open a Marp markdown file to export.');
+        return;
+      }
+      await exportMarpPptx(doc);
     })
   );
 }
 
+/**
+ * Check if a document is a Marp deck and set the context key accordingly.
+ * When doc is undefined (e.g. switching to preview webview), keep the last state
+ * so the button remains visible in the preview title bar.
+ */
+function updateMarpContext(doc: vscode.TextDocument | undefined): void {
+  if (!doc) { return; } // Keep last state when switching to webview/preview
+  if (doc.languageId !== 'markdown') {
+    vscode.commands.executeCommand('setContext', 'tikzjax.isMarpFile', false);
+    return;
+  }
+  const head = doc.getText().slice(0, 500);
+  const isMarp = /^---[\s\S]*?marp:\s*true/m.test(head);
+  vscode.commands.executeCommand('setContext', 'tikzjax.isMarpFile', isMarp);
+}
+
 function registerEventHandlers(context: vscode.ExtensionContext): void {
+  // Set initial Marp context
+  updateMarpContext(vscode.window.activeTextEditor?.document);
+
   // Track active markdown document
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (editor && editor.document.languageId === 'markdown') {
         lastMarkdownDocument = editor.document;
       }
+      updateMarpContext(editor?.document);
     })
   );
 
@@ -281,6 +318,7 @@ function registerEventHandlers(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (event.document.languageId !== 'markdown' || !previewManager) { return; }
       lastMarkdownDocument = event.document;
+      updateMarpContext(event.document);
       if (debounceTimer) { clearTimeout(debounceTimer); }
       debounceTimer = setTimeout(async () => {
         debounceTimer = undefined;
@@ -307,6 +345,225 @@ function formatBytes(bytes: number): string {
   const sizes = ['Bytes', 'KB', 'MB', 'GB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+}
+
+/**
+ * Render TikZ source to SVG using node-tikzjax directly.
+ * Mirrors the logic in marp-tikz.js / PreviewManager._renderTikzToSvg.
+ */
+async function renderTikzSourceToSvg(source: string): Promise<string> {
+  const tex2svg = (await import('node-tikzjax')).default;
+
+  let processed = preprocessSource(source);
+
+  // Downgrade pgfplots compat (engine limitation)
+  processed = processed.replace(
+    /\\pgfplotsset\s*\{\s*compat\s*=\s*[\d.]+\s*\}/,
+    '\\pgfplotsset{compat=1.16}'
+  );
+
+  // Detect packages
+  const packages: Record<string, string> = {};
+  const pkgRegex = /\\usepackage(?:\[([^\]]*)\])?\{([^}]+)\}/g;
+  let m;
+  while ((m = pkgRegex.exec(processed)) !== null) {
+    packages[m[2].trim()] = m[1] || '';
+  }
+
+  // Detect tikz libraries
+  const libs: string[] = [];
+  const libRegex = /\\usetikzlibrary\{([^}]+)\}/g;
+  while ((m = libRegex.exec(processed)) !== null) {
+    libs.push(...m[1].split(',').map(s => s.trim()).filter(Boolean));
+  }
+
+  return tex2svg(processed, {
+    showConsole: false,
+    texPackages: packages,
+    tikzLibraries: libs.join(','),
+  });
+}
+
+/**
+ * Fix SVG width/height to match viewBox (same as marp-tikz.js fixSvgDimensions).
+ */
+function fixSvgDimensions(svg: string): string {
+  const viewBoxMatch = svg.match(/viewBox="([^"]+)"/);
+  if (!viewBoxMatch) { return svg; }
+  const parts = viewBoxMatch[1].trim().split(/\s+/);
+  if (parts.length !== 4) { return svg; }
+  let result = svg.replace(/(<svg[^>]*?\s)width="[^"]*"/, `$1width="${parts[2]}pt"`);
+  result = result.replace(/(<svg[^>]*?\s)height="[^"]*"/, `$1height="${parts[3]}pt"`);
+  return result;
+}
+
+/**
+ * Run marp-cli to convert processed markdown to PPTX.
+ * Uses the resolved path to avoid npx hanging issues in the extension host.
+ */
+function runMarpCli(processedMdPath: string, outputPath: string, cwd: string, timeoutMs: number): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    // Resolve marp-cli binary path to avoid npx overhead/hanging
+    let marpBin: string;
+    try {
+      const resolved = require.resolve('@marp-team/marp-cli/marp-cli.js');
+      marpBin = resolved;
+    } catch {
+      // Fallback: try npx
+      marpBin = '';
+    }
+
+    const args = ['--pptx', '--allow-local-files', '--html', '--no-stdin', processedMdPath, '-o', outputPath];
+    let cmd: string;
+    let cmdArgs: string[];
+    if (marpBin) {
+      cmd = process.execPath; // node
+      cmdArgs = [marpBin, ...args];
+    } else {
+      cmd = 'npx';
+      cmdArgs = ['@marp-team/marp-cli', ...args];
+    }
+
+    const child = execFile(cmd, cmdArgs, {
+      cwd,
+      timeout: timeoutMs,
+      env: { ...process.env, NODE_NO_WARNINGS: '1' },
+    }, (error, _stdout, stderr) => {
+      if (error) {
+        const msg = stderr?.trim() || error.message;
+        if (error.killed || (error as any).code === 'ETIMEDOUT') {
+          reject(new Error(`marp-cli timed out after ${timeoutMs / 1000}s`));
+        } else {
+          reject(new Error(msg));
+        }
+      } else {
+        resolve();
+      }
+    });
+
+    // Safety: kill the process if it's still running when timeout fires
+    // (node's execFile timeout sends SIGTERM, but we also guard here)
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+    }, timeoutMs + 5000);
+    child.on('exit', () => clearTimeout(timer));
+  });
+}
+
+/** Timeout value for marp-cli (60 seconds) */
+const MARP_CLI_TIMEOUT = 60_000;
+
+/**
+ * Export the active Marp document to PPTX, rendering TikZ blocks to SVG first.
+ */
+async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
+  const inputPath = doc.uri.fsPath;
+  const inputDir = path.dirname(inputPath);
+  const inputBasename = path.basename(inputPath, '.md');
+
+  let result: string | undefined;
+  try {
+    result = await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Notification, title: 'Exporting Marp slides…', cancellable: true },
+    async (progress, token): Promise<string | undefined> => {
+      let md = doc.getText();
+
+      // Find all tikz blocks
+      const tikzRegex = /^```tikz\s*$([\s\S]*?)^```\s*$/gm;
+      const blocks: { full: string; source: string }[] = [];
+      let match;
+      while ((match = tikzRegex.exec(md)) !== null) {
+        blocks.push({ full: match[0], source: match[1] });
+      }
+
+      // Create temp directory for processed files
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tikz-marp-'));
+      const imgDir = path.join(tmpDir, '.tikz-images');
+      fs.mkdirSync(imgDir);
+
+      try {
+        // Render TikZ blocks to SVG
+        if (blocks.length > 0) {
+          for (let i = 0; i < blocks.length; i++) {
+            if (token.isCancellationRequested) { return; }
+            progress.report({ message: `Rendering diagram ${i + 1}/${blocks.length}…` });
+            try {
+              const svg = await renderTikzSourceToSvg(blocks[i].source);
+              const fixed = fixSvgDimensions(svg);
+              const svgFile = path.join(imgDir, `tikz-${i + 1}.svg`);
+              fs.writeFileSync(svgFile, fixed, 'utf-8');
+
+              const relPath = `.tikz-images/tikz-${i + 1}.svg`;
+              const imgTag = `\n<div style="display:flex;justify-content:center;align-items:center;"><img src="${relPath}" /></div>\n`;
+              md = md.replace(blocks[i].full, imgTag);
+            } catch (err: any) {
+              md = md.replace(blocks[i].full, `<p style="color:red;">TikZ render failed: ${escapeHtml(err.message)}</p>`);
+            }
+          }
+        }
+
+        if (token.isCancellationRequested) { return; }
+
+        // Write processed markdown to temp dir
+        const processedMdPath = path.join(tmpDir, `${inputBasename}.md`);
+        fs.writeFileSync(processedMdPath, md, 'utf-8');
+
+        // Determine output path (next to original file)
+        const outputPath = path.join(inputDir, `${inputBasename}.pptx`);
+
+        // Run marp-cli with retry on failure
+        const maxAttempts = 2;
+        let lastError: Error | undefined;
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          if (token.isCancellationRequested) { return; }
+          progress.report({
+            message: attempt > 1
+              ? `Retrying marp-cli (attempt ${attempt}/${maxAttempts})…`
+              : 'Running marp-cli…'
+          });
+          try {
+            await runMarpCli(processedMdPath, outputPath, tmpDir, MARP_CLI_TIMEOUT);
+            lastError = undefined;
+            break;
+          } catch (err: any) {
+            lastError = err;
+            outputChannel.appendLine(`[marp-export] Attempt ${attempt} failed: ${err.message}`);
+          }
+        }
+
+        if (lastError) {
+          throw lastError;
+        }
+
+        return outputPath;
+      } finally {
+        // Cleanup temp directory
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    }
+  );
+  } catch (err: any) {
+    const retry = await vscode.window.showErrorMessage(
+      `Export failed: ${err.message}`,
+      'Retry', 'Dismiss'
+    );
+    if (retry === 'Retry') {
+      await exportMarpPptx(doc);
+    }
+    return;
+  }
+
+  if (result) {
+    const action = await vscode.window.showInformationMessage(
+      `Exported to ${path.basename(result)}`,
+      'Open File', 'Reveal in Finder'
+    );
+    if (action === 'Open File') {
+      await vscode.env.openExternal(vscode.Uri.file(result));
+    } else if (action === 'Reveal in Finder') {
+      await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(result));
+    }
+  }
 }
 
 export function deactivate(): void {

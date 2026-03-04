@@ -82,8 +82,33 @@
         "title": "Reset TikZJax Engine",
         "category": "TikZJax",
         "when": "editorLangId == markdown"
+      },
+      {
+        "command": "tikzjax.exportMarpPptx",
+        "title": "Export Marp Slides to PPTX",
+        "category": "TikZJax",
+        "icon": "$(desktop-download)"
       }
     ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "tikzjax.exportMarpPptx",
+          "group": "navigation",
+          "when": "editorLangId == markdown && tikzjax.isMarpFile"
+        },
+        {
+          "command": "tikzjax.exportMarpPptx",
+          "group": "navigation",
+          "when": "activeWebviewPanelId == 'markdown.preview' && tikzjax.isMarpFile"
+        },
+        {
+          "command": "tikzjax.exportMarpPptx",
+          "group": "navigation",
+          "when": "activeCustomEditorId == 'vscode.markdown.preview.editor' && tikzjax.isMarpFile"
+        }
+      ]
+    },
     "configuration": {
       "title": "TikZJax",
       "properties": {

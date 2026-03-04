@@ -53,10 +53,34 @@ export function activate(context: vscode.ExtensionContext) {
 
   outputChannel.appendLine('TikZJax extension activated');
 
+  /**
+   * Shared rendering logic — returns HTML for a TikZ source string.
+   * Includes inline style fallbacks so output works inside Marp (which strips external CSS).
+   */
+  function renderTikzHtml(source: string): string {
+    const hash = generateHash(source.trim());
+    const result = previewManager?.getSvg(hash);
+    outputChannel.appendLine(`[render] content length=${source.length} trimmed length=${source.trim().length} hash=${hash.slice(0, 8)}`);
+
+    if (result?.svg) {
+      outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → cached SVG`);
+      return `<div class="tikz-diagram" style="text-align:center;margin:1em 0">${result.svg}</div>\n`;
+    } else if (result?.error) {
+      outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → error: ${result.error.slice(0, 80)}`);
+      const escaped = escapeHtml(result.error);
+      return `<div class="tikz-diagram tikz-error" style="text-align:center;margin:1em 0;color:#c00"><div class="tikz-error-title">⚠ Rendering Error</div><pre class="tikz-error-message" style="white-space:pre-wrap">${escaped}</pre></div>\n`;
+    } else {
+      outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → not cached, triggering background render`);
+      scheduleBackgroundRender();
+      return `<div class="tikz-diagram tikz-loading" style="text-align:center;margin:1em 0"><span class="tikz-spinner"></span> Rendering TikZ diagram…</div>\n`;
+    }
+  }
+
   return {
     extendMarkdownIt(md: any) {
       outputChannel.appendLine('extendMarkdownIt called — registering tikz fence renderer');
 
+      // ── Non-Marp path: custom fence rule on the outer renderer ──
       const defaultFence = md.renderer.rules.fence ||
         function (tokens: any, idx: any, options: any, _env: any, self: any) {
           return self.renderToken(tokens, idx, options);
@@ -67,28 +91,80 @@ export function activate(context: vscode.ExtensionContext) {
         const info = (token.info || '').trim().toLowerCase();
 
         if (info === 'tikz') {
-          const source = token.content;
-          const hash = generateHash(source.trim());
-          const result = previewManager?.getSvg(hash);
-          outputChannel.appendLine(`[md-it] content length=${source.length} trimmed length=${source.trim().length} hash=${hash.slice(0, 8)}`);
-          outputChannel.appendLine(`[md-it] first 80 chars: ${JSON.stringify(source.trim().slice(0, 80))}`);
-
-          if (result?.svg) {
-            outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → cached SVG`);
-            return `<div class="tikz-diagram">${result.svg}</div>\n`;
-          } else if (result?.error) {
-            outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → error: ${result.error.slice(0, 80)}`);
-            const escaped = escapeHtml(result.error);
-            return `<div class="tikz-diagram tikz-error"><div class="tikz-error-title">⚠ Rendering Error</div><pre class="tikz-error-message">${escaped}</pre></div>\n`;
-          } else {
-            outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → not cached, triggering background render`);
-            scheduleBackgroundRender();
-            return `<div class="tikz-diagram tikz-loading"><span class="tikz-spinner"></span> Rendering TikZ diagram…</div>\n`;
-          }
+          return renderTikzHtml(token.content);
         }
 
         return defaultFence(tokens, idx, options, env, self);
       };
+
+      // ── Marp compatibility ──
+      // Marp creates a NEW internal markdown-it instance on every parse() call
+      // and only copies `image` and `link_open` renderer rules — our fence rule
+      // is never on that internal renderer.
+      //
+      // Strategy: After ALL extensions have loaded, wrap md.parse so that after
+      // each parse call we find Marp's internal instance (stored on
+      // md[Symbol("marp-vscode")]) and install our fence rule on its renderer
+      // before render() runs.
+      //
+      // Timing: queueMicrotask fires BETWEEN extension loads (VS Code uses
+      // async for-of with await), so we use setTimeout(0) which fires after
+      // all microtasks — guaranteeing all extensions have finished loading.
+
+      /** Find Marp's Symbol key on the md object */
+      const findMarpSymbol = (): symbol | undefined => {
+        return Object.getOwnPropertySymbols(md).find(
+          s => s.toString().includes('marp')
+        );
+      };
+
+      /** Install our tikz fence rule on Marp's internal renderer */
+      const installFenceOnMarpInstance = (): void => {
+        const sym = findMarpSymbol();
+        if (!sym) { return; }
+        const marpInstance = md[sym];
+        if (!marpInstance || !marpInstance.markdown) { return; }
+        const marpRenderer = marpInstance.markdown.renderer;
+        // Marp creates a new instance per-parse, so always install fresh
+        if (marpRenderer.rules._tikzFenceInstalled) { return; }
+        marpRenderer.rules._tikzFenceInstalled = true;
+        outputChannel.appendLine('[marp-compat] Installing fence rule on Marp internal renderer');
+        const origFence = marpRenderer.rules.fence ||
+          function (tokens: any, idx: any, options: any, _env: any, self: any) {
+            return self.renderToken(tokens, idx, options);
+          };
+        marpRenderer.rules.fence = (tokens: any, idx: any, options: any, env: any, self: any) => {
+          const token = tokens[idx];
+          const info = (token.info || '').trim().toLowerCase();
+          if (info === 'tikz') {
+            outputChannel.appendLine('[marp-fence] Rendering tikz block');
+            return renderTikzHtml(token.content);
+          }
+          return origFence(tokens, idx, options, env, self);
+        };
+      };
+
+      // Wrap md.parse synchronously (handles case where we load after Marp)
+      const origParse = md.parse.bind(md);
+      md.parse = function (src: string, env?: any) {
+        const tokens = origParse(src, env);
+        installFenceOnMarpInstance();
+        return tokens;
+      };
+
+      // Re-wrap after ALL extensions load using setTimeout(0).
+      // setTimeout(0) fires after all microtasks (including VS Code's
+      // async extension loading loop), so Marp's overwrite has completed.
+      setTimeout(() => {
+        const currentParse = md.parse;
+        md.parse = function (src: string, env?: any) {
+          outputChannel.appendLine(`[parse-wrapper] src.length=${src.length}`);
+          const tokens = currentParse.call(md, src, env);
+          installFenceOnMarpInstance();
+          return tokens;
+        };
+        outputChannel.appendLine('[init] Installed tikz parse wrapper via setTimeout(0)');
+      }, 0);
 
       return md;
     }

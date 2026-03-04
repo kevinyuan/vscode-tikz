@@ -1,12 +1,13 @@
 # TikZJax for VS Code
 
-Render beautiful LaTeX and TikZ diagrams directly in your Markdown files. Create mathematical diagrams, circuit schematics, chemical structures, commutative diagrams, and more—all with live preview.
+Render beautiful LaTeX and TikZ diagrams directly in your Markdown files. Create mathematical diagrams, circuit schematics, chemical structures, commutative diagrams, and more — all with live preview. Works with both standard Markdown preview and [Marp](https://marp.app/) slide decks.
 
 ![TikZJax Extension Screenshot](imgs/screenshot.png)
 
 ## Features
 
 - **Live Preview**: See your TikZ diagrams rendered in real-time as you type
+- **Marp Compatibility**: TikZ diagrams render inside Marp slide decks (`marp: true`)
 - **Rich Package Support**: Use chemfig, circuitikz, pgfplots, tikz-cd, and more
 - **Dark Mode**: Automatic color inversion for seamless dark theme integration
 - **Smart Caching**: Previously rendered diagrams load instantly
@@ -30,9 +31,49 @@ Render beautiful LaTeX and TikZ diagrams directly in your Markdown files. Create
 ```
 ````
 
-3. Open the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`)
-4. Run **TikZJax: Open TikZ Preview**
-5. Your diagram appears in the preview panel!
+3. Open the Markdown preview (`Ctrl+Shift+V` / `Cmd+Shift+V`)
+4. Your diagram appears in the preview panel!
+
+## Marp Slide Decks
+
+TikZ diagrams work inside [Marp](https://marketplace.visualstudio.com/items?itemName=marp-team.marp-vscode) slide decks. Add `marp: true` to your frontmatter and use tikz code blocks as usual:
+
+````markdown
+---
+marp: true
+---
+
+# My Presentation
+
+```tikz
+\begin{document}
+\begin{tikzpicture}
+  \node[circle, draw] (a) at (0,0) {A};
+  \node[circle, draw] (b) at (3,0) {B};
+  \draw[->] (a) -- (b);
+\end{tikzpicture}
+\end{document}
+```
+````
+
+### Diagram sizing in Marp
+
+Marp renders slides at a fixed 1280x720 resolution, then scales the entire slide to fit the preview pane. This means TikZ diagrams may appear smaller than in standard Markdown preview, since they occupy a smaller proportion of the 1280px-wide slide.
+
+To make diagrams larger in Marp slides, use TikZ's `scale` option:
+
+````markdown
+```tikz
+\begin{document}
+\begin{tikzpicture}[scale=2]
+  \draw (0,0) rectangle (3,2);
+  \node at (1.5,1) {\Large Hello!};
+\end{tikzpicture}
+\end{document}
+```
+````
+
+A `scale=2` factor generally makes diagrams appear at a similar visual size to the standard Markdown preview.
 
 ## Usage
 
@@ -46,10 +87,10 @@ Create geometric shapes and drawings:
 \begin{tikzpicture}
   % Rectangle
   \draw[thick] (0,0) rectangle (2,1.5);
-  
+
   % Circle
   \draw[fill=blue!20] (4,0.75) circle (0.75);
-  
+
   % Triangle
   \draw[fill=red!20] (6,0) -- (7.5,0) -- (6.75,1.5) -- cycle;
 \end{tikzpicture}
@@ -67,7 +108,7 @@ Create geometric shapes and drawings:
   \node[circle,draw] (B) [right of=A] {B};
   \node[circle,draw] (C) [below of=A] {C};
   \node[circle,draw] (D) [right of=C] {D};
-  
+
   \draw[->] (A) -- (B);
   \draw[->] (A) -- (C);
   \draw[->] (B) -- (D);
@@ -197,7 +238,7 @@ Customize the extension behavior through VS Code settings:
 
 ### `tikzjax.invertColorsInDarkMode`
 
-**Type:** `boolean`  
+**Type:** `boolean`
 **Default:** `true`
 
 Automatically invert diagram colors when using a dark theme. Black colors become the current text color, and white colors match the background.
@@ -210,8 +251,8 @@ Automatically invert diagram colors when using a dark theme. Black colors become
 
 ### `tikzjax.renderTimeout`
 
-**Type:** `number` (milliseconds)  
-**Default:** `15000`  
+**Type:** `number` (milliseconds)
+**Default:** `15000`
 **Range:** 1000 - 60000
 
 Maximum time to wait for a diagram to render before timing out. Increase this for complex diagrams.
@@ -224,7 +265,7 @@ Maximum time to wait for a diagram to render before timing out. Increase this fo
 
 ### `tikzjax.autoPreview`
 
-**Type:** `boolean`  
+**Type:** `boolean`
 **Default:** `false`
 
 Automatically open the preview panel when opening a Markdown file containing TikZ diagrams.
@@ -237,7 +278,7 @@ Automatically open the preview panel when opening a Markdown file containing Tik
 
 ### `tikzjax.previewPosition`
 
-**Type:** `"side" | "below" | "window"`  
+**Type:** `"side" | "below" | "window"`
 **Default:** `"side"`
 
 Default position for the preview panel:
@@ -255,31 +296,7 @@ Default position for the preview panel:
 
 ### Multiple Diagrams
 
-You can include multiple tikz code blocks in a single Markdown file. Each diagram renders independently:
-
-````markdown
-# My Document
-
-First diagram:
-
-```tikz
-\begin{document}
-\begin{tikzpicture}
-  \draw (0,0) circle (1);
-\end{tikzpicture}
-\end{document}
-```
-
-Second diagram:
-
-```tikz
-\begin{document}
-\begin{tikzpicture}
-  \draw (0,0) rectangle (2,1);
-\end{tikzpicture}
-\end{document}
-```
-````
+You can include multiple tikz code blocks in a single Markdown file. Each diagram renders independently.
 
 ### Error Handling
 
@@ -307,24 +324,20 @@ The extension automatically adjusts diagram colors for dark themes. If you prefe
 }
 ```
 
-## Examples
-
-Check out the [examples/tikz-examples.md](examples/tikz-examples.md) file for a comprehensive collection of diagrams demonstrating all supported packages and features.
-
 ## Troubleshooting
 
 ### Diagrams not rendering
 
 1. Ensure you're editing a Markdown file (`.md` extension)
 2. Check that your code block uses the `tikz` language identifier
-3. Open the preview panel with **TikZJax: Open TikZ Preview**
+3. Open the Markdown preview (`Ctrl+Shift+V` / `Cmd+Shift+V`)
 4. Check the error message if displayed
 
 ### Slow rendering
 
 1. Increase the timeout: `"tikzjax.renderTimeout": 30000`
 2. Simplify complex diagrams
-3. Use the cache—unchanged diagrams load instantly
+3. Use the cache — unchanged diagrams load instantly
 
 ### Preview not updating
 
@@ -340,8 +353,8 @@ Check out the [examples/tikz-examples.md](examples/tikz-examples.md) file for a 
 
 ## Requirements
 
-- VS Code version 1.85.0 or higher
-- Active internet connection for initial TikZJax library loading
+- VS Code 1.85.0 or higher
+- No internet connection required — rendering is fully offline
 
 ## License
 
@@ -349,13 +362,9 @@ MIT License - see [LICENSE.md](LICENSE.md) for details.
 
 ## Acknowledgments
 
-This extension was inspired by and builds upon the excellent work of:
-
-- **[node-tikzjax](https://github.com/drgrice1/node-tikzjax)** by @drgrice1 - Server-side TikZ rendering engine that powers this extension
-- **[obsidian-tikzjax](https://github.com/artisticat1/obsidian-tikzjax)** by @artisticat1 - Original Obsidian plugin that demonstrated TikZ integration in note-taking apps
-- **[TikZJax](https://github.com/kisonecat/tikzjax)** by @kisonecat - The foundational browser-based TikZ compiler
-
-Special thanks to these projects for making LaTeX and TikZ accessible in modern editing environments.
+- **[node-tikzjax](https://github.com/drgrice1/node-tikzjax)** by @drgrice1 - Server-side TikZ rendering engine
+- **[obsidian-tikzjax](https://github.com/artisticat1/obsidian-tikzjax)** by @artisticat1 - Original Obsidian plugin
+- **[TikZJax](https://github.com/kisonecat/tikzjax)** by @kisonecat - Browser-based TikZ compiler
 
 ---
 

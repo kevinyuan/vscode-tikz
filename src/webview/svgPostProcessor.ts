@@ -23,20 +23,20 @@ const SVGO_CONFIG: Config = {
             name: 'preset-default',
             params: {
                 overrides: {
-                    // Preserve IDs to avoid conflicts with multiple diagrams (Requirement 12.2)
+                    // Preserve IDs to avoid conflicts with multiple diagrams
                     cleanupIds: false,
                     // Preserve viewBox for proper scaling
                     removeViewBox: false,
+                    // Disable path optimizations that degrade rendering quality
+                    // (cause uneven stroke widths and jagged curves)
+                    convertPathData: false,
+                    mergePaths: false,
+                    convertTransform: false,
+                    // Preserve shape primitives for crisp rendering
+                    convertShapeToPath: false,
                 }
             }
         },
-        // Fix text alignment issues on different platforms (Requirement 12.4)
-        {
-            name: 'convertStyleToAttrs',
-            params: {
-                // Convert style attributes to individual attributes for better compatibility
-            }
-        }
     ]
 };
 
@@ -49,8 +49,13 @@ const SVGO_CONFIG: Config = {
  */
 export function postProcessSvg(svg: string, darkMode: boolean): string {
     try {
-        // Apply SVGO optimization (Requirement 12.1)
-        const optimized = optimizeSvg(svg);
+        // Apply SVGO optimization
+        let optimized = optimizeSvg(svg);
+
+        // Fix SVG dimensions to match viewBox so 1 SVG unit = 1 CSS pixel.
+        // node-tikzjax outputs width/height ~1.333x the viewBox dimensions,
+        // causing fractional stroke widths and uneven rendering.
+        optimized = fixSvgDimensions(optimized);
 
         // Apply color transformations if in dark mode
         const transformed = transformSvgColors(optimized, darkMode);
@@ -75,6 +80,29 @@ export function postProcessSvg(svg: string, darkMode: boolean): string {
 export function optimizeSvg(svg: string): string {
     const result = optimize(svg, SVGO_CONFIG);
     return result.data;
+}
+
+/**
+ * Fixes SVG width/height to match the viewBox dimensions exactly.
+ * node-tikzjax outputs width/height ~1.333x the viewBox (72/54 dpi ratio),
+ * causing stroke-width values to render at fractional CSS pixels (e.g. 0.8 → 1.067),
+ * which produces uneven borders and jagged curves.
+ */
+function fixSvgDimensions(svg: string): string {
+    const viewBoxMatch = svg.match(/viewBox="([^"]+)"/);
+    if (!viewBoxMatch) { return svg; }
+
+    const parts = viewBoxMatch[1].trim().split(/\s+/);
+    if (parts.length !== 4) { return svg; }
+
+    const vbWidth = parts[2];
+    const vbHeight = parts[3];
+
+    // Replace width="..." and height="..." with viewBox dimensions (pt units)
+    let result = svg.replace(/(<svg[^>]*?\s)width="[^"]*"/, `$1width="${vbWidth}pt"`);
+    result = result.replace(/(<svg[^>]*?\s)height="[^"]*"/, `$1height="${vbHeight}pt"`);
+
+    return result;
 }
 
 /**

@@ -18,6 +18,12 @@ Render beautiful LaTeX and TikZ diagrams directly in your Markdown files. Create
 <td align="center"><em>circuitikz</em></td>
 <td align="center"><em>3D surface plot</em></td>
 </tr>
+<tr>
+<td align="center" colspan="3"><img src="imgs/tikz-in-marp-export.png" width="800" alt="TikZ in Marp slide export" /></td>
+</tr>
+<tr>
+<td align="center" colspan="3"><em>TikZ diagrams in Marp slides with one-click PPTX export</em></td>
+</tr>
 </table>
 
 ## Features
@@ -311,8 +317,6 @@ Default position for the preview panel:
 ## Export Marp Slides to PPTX
 
 For Marp slide decks containing TikZ diagrams, you can export directly to PPTX from VS Code. When a Marp file is open (`marp: true` in frontmatter), an export button appears in the editor title bar — visible in both the editor and preview modes.
-
-![Export Marp slides with TikZ](imgs/tikz-in-marp-export.png)
 
 Click the button to:
 1. Render all TikZ diagrams to SVG

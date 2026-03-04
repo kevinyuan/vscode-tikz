@@ -1,5 +1,8 @@
 # TikZJax for VS Code
 
+[![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/kevinyuan.vscode-tikzjax?label=VS%20Marketplace&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=kevinyuan.vscode-tikzjax)
+[![Installs](https://img.shields.io/visual-studio-marketplace/i/kevinyuan.vscode-tikzjax)](https://marketplace.visualstudio.com/items?itemName=kevinyuan.vscode-tikzjax)
+
 Render beautiful LaTeX and TikZ diagrams directly in your Markdown files. Create mathematical diagrams, circuit schematics, chemical structures, commutative diagrams, and more — all with live preview. Works with both standard Markdown preview and [Marp](https://marp.app/) slide decks.
 
 ![TikZJax Extension Screenshot](imgs/screenshot.png)

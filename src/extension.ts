@@ -539,8 +539,13 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
           }
         }
 
-        // Determine output path (next to original file)
-        const outputPath = path.join(inputDir, `${inputBasename}.pptx`);
+        // Determine output path (next to original file, timestamped)
+        const now = new Date();
+        const dd = String(now.getDate()).padStart(2, '0');
+        const hh = String(now.getHours()).padStart(2, '0');
+        const mm = String(now.getMinutes()).padStart(2, '0');
+        const ss = String(now.getSeconds()).padStart(2, '0');
+        const outputPath = path.join(inputDir, `${inputBasename}-${dd}-${hh}${mm}${ss}.pptx`);
 
         // Run marp-cli with retry on failure
         const maxAttempts = 2;

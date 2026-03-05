@@ -53,3 +53,9 @@ Settings live under `tikzjax.*`: `invertColorsInDarkMode`, `renderTimeout`, `aut
 - Cache keys are SHA-256 of trimmed TikZ source.
 - The `pgfplotsset{compat=...}` version is downgraded to `1.16` due to engine limitations.
 - TypeScript strict mode with all strict flags enabled (`noUnusedLocals`, `noUnusedParameters`, `noImplicitReturns`, `noFallthroughCasesInSwitch`).
+
+## Workflow
+
+- Do NOT auto-publish to VS Code extension marketplace
+- After tests pass: auto commit and push to GitHub
+- If user requests publish: bump version (if not already bumped), then publish

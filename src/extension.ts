@@ -561,7 +561,7 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
         // LibreOffice's ODP→PPTX conversion creates opaque white rectangles
         // covering the entire slide that block clicking/selecting content.
         try {
-          fixPptxOverlays(outputPath);
+          await fixPptxOverlays(outputPath);
           outputChannel.appendLine('[marp-export] Post-processed PPTX: removed overlay shapes');
         } catch (ppErr: any) {
           outputChannel.appendLine(`[marp-export] PPTX post-processing failed: ${ppErr.message}`);
@@ -605,16 +605,17 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
  * After removal, shape IDs are renumbered to avoid gaps that trigger
  * PowerPoint's repair prompt.
  */
-function fixPptxOverlays(pptxPath: string): void {
-  const AdmZip = require('adm-zip');
-  const zip = new AdmZip(pptxPath);
+async function fixPptxOverlays(pptxPath: string): Promise<void> {
+  const JSZip = require('jszip');
+  const zip = await JSZip.loadAsync(fs.readFileSync(pptxPath));
   let modified = false;
 
-  for (const entry of zip.getEntries()) {
-    if (!/^ppt\/slides\/slide\d+\.xml$/.test(entry.entryName)) { continue; }
+  const slidePattern = /^ppt\/slides\/slide\d+\.xml$/;
+  for (const filename of Object.keys(zip.files)) {
+    if (!slidePattern.test(filename)) { continue; }
 
-    let xml = entry.getData().toString('utf-8');
-    const original = xml;
+    const original = await zip.file(filename)!.async('string');
+    let xml = original;
 
     xml = xml.replace(/<p:sp>[\s\S]*?<\/p:sp>/g, (match: string) => {
       const extMatch = match.match(/<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/);
@@ -636,13 +637,14 @@ function fixPptxOverlays(pptxPath: string): void {
         if (id === '1') { return match; }
         return `<p:cNvPr id="${nextId++}"`;
       });
-      zip.updateFile(entry.entryName, Buffer.from(xml, 'utf-8'));
+      zip.file(filename, xml);
       modified = true;
     }
   }
 
   if (modified) {
-    zip.writeZip(pptxPath);
+    const output = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    fs.writeFileSync(pptxPath, output);
   }
 }
 

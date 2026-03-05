@@ -62,31 +62,31 @@
       {
         "command": "tikzjax.openPreview",
         "title": "Open TikZ Preview",
-        "category": "TikZJax",
+        "category": "TikZ",
         "when": "editorLangId == markdown"
       },
       {
         "command": "tikzjax.refreshDiagrams",
         "title": "Refresh TikZ Diagrams",
-        "category": "TikZJax",
+        "category": "TikZ",
         "when": "editorLangId == markdown"
       },
       {
         "command": "tikzjax.clearCache",
         "title": "Clear TikZ Cache",
-        "category": "TikZJax",
+        "category": "TikZ",
         "when": "editorLangId == markdown"
       },
       {
         "command": "tikzjax.resetEngine",
         "title": "Reset TikZJax Engine",
-        "category": "TikZJax",
+        "category": "TikZ",
         "when": "editorLangId == markdown"
       },
       {
         "command": "tikzjax.exportMarpPptx",
         "title": "Export Marp Slides to PPTX",
-        "category": "TikZJax",
+        "category": "TikZ",
         "icon": "$(desktop-download)"
       }
     ],
@@ -110,7 +110,7 @@
       ]
     },
     "configuration": {
-      "title": "TikZJax",
+      "title": "TikZ in Markdown",
       "properties": {
         "tikzjax.invertColorsInDarkMode": {
           "type": "boolean",

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
-import { execFile } from 'child_process';
+import { execFile, execFileSync } from 'child_process';
 import { DocumentParser } from './core/DocumentParser';
 import { CacheManager } from './core/CacheManager';
 import { ConfigurationManager } from './config/ConfigurationManager';
@@ -406,44 +406,45 @@ function fixSvgDimensions(svg: string): string {
   return result;
 }
 
+/** Resolve marp-cli command and args prefix. */
+function resolveMarpCli(): { cmd: string; prefix: string[] } {
+  try {
+    const resolved = require.resolve('@marp-team/marp-cli/marp-cli.js');
+    return { cmd: process.execPath, prefix: [resolved] };
+  } catch {
+    return { cmd: 'npx', prefix: ['@marp-team/marp-cli'] };
+  }
+}
+
+/** Check marp-cli version and return true if >= 4.1.0. */
+function marpSupportsEditablePptx(): boolean {
+  try {
+    const { cmd, prefix } = resolveMarpCli();
+    const verOut = execFileSync(cmd, [...prefix, '--version'], {
+      encoding: 'utf-8', timeout: 10000,
+    }).trim();
+    const m = verOut.match(/(\d+)\.(\d+)\.\d+/);
+    if (!m) { return false; }
+    const [, major, minor] = m.map(Number);
+    return major > 4 || (major === 4 && minor >= 1);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Run marp-cli to convert processed markdown to PPTX.
- * Uses the resolved path to avoid npx hanging issues in the extension host.
  */
 function runMarpCli(processedMdPath: string, outputPath: string, cwd: string, timeoutMs: number): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    // Resolve marp-cli binary path to avoid npx overhead/hanging
-    let marpBin: string;
-    try {
-      const resolved = require.resolve('@marp-team/marp-cli/marp-cli.js');
-      marpBin = resolved;
-    } catch {
-      // Fallback: try npx
-      marpBin = '';
-    }
+    const { cmd, prefix } = resolveMarpCli();
 
-    // Check marp-cli version to decide whether to use --pptx-editable
-    const pptxArgs = ['--pptx'];
-    try {
-      const marpPkg = require('@marp-team/marp-cli/package.json');
-      const ver = (marpPkg.version || '').split('.').map(Number);
-      if (ver[0] > 4 || (ver[0] === 4 && ver[1] >= 1)) {
-        pptxArgs.push('--pptx-editable');
-      }
-    } catch {
-      // Version check failed, proceed without --pptx-editable
+    const args = ['--pptx', '--allow-local-files', '--html', '--no-stdin', processedMdPath, '-o', outputPath];
+    if (marpSupportsEditablePptx()) {
+      args.splice(1, 0, '--pptx-editable');
+      outputChannel.appendLine('[marp-export] Marp >= 4.1.0, enabling --pptx-editable');
     }
-
-    const args = [...pptxArgs, '--allow-local-files', '--html', '--no-stdin', processedMdPath, '-o', outputPath];
-    let cmd: string;
-    let cmdArgs: string[];
-    if (marpBin) {
-      cmd = process.execPath; // node
-      cmdArgs = [marpBin, ...args];
-    } else {
-      cmd = 'npx';
-      cmdArgs = ['@marp-team/marp-cli', ...args];
-    }
+    const cmdArgs = [...prefix, ...args];
 
     const child = execFile(cmd, cmdArgs, {
       cwd,

@@ -530,6 +530,15 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
         const processedMdPath = path.join(tmpDir, `${inputBasename}.md`);
         fs.writeFileSync(processedMdPath, md, 'utf-8');
 
+        // Symlink assets from original directory so relative paths in CSS resolve
+        for (const entry of fs.readdirSync(inputDir)) {
+          const src = path.join(inputDir, entry);
+          const dest = path.join(tmpDir, entry);
+          if (!fs.existsSync(dest)) {
+            try { fs.symlinkSync(src, dest); } catch { /* skip if symlink fails */ }
+          }
+        }
+
         // Determine output path (next to original file)
         const outputPath = path.join(inputDir, `${inputBasename}.pptx`);
 

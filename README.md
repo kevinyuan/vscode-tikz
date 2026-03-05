@@ -399,6 +399,9 @@ The extension automatically adjusts diagram colors for dark themes. If you prefe
 
 - VS Code 1.85.0 or higher
 - No internet connection required — rendering is fully offline
+- **For editable PPTX export** (optional):
+  - [marp-cli](https://github.com/marp-team/marp-cli) v4.1.0+ (`npm install -g @marp-team/marp-cli`)
+  - [LibreOffice](https://www.libreoffice.org/) (used by marp-cli for ODP→PPTX conversion)
 
 ## License
 

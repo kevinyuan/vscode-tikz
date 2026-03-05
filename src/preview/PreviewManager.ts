@@ -278,29 +278,9 @@ export class PreviewManager {
 
     /**
      * Nudge the document to force the Markdown preview to re-render.
-     * Inserts a space at the end of the document, then immediately undoes it.
      */
-    private async _nudgeDocument(document: vscode.TextDocument): Promise<void> {
-        // Find the editor for this document
-        const editor = vscode.window.visibleTextEditors.find(
-            e => e.document.uri.toString() === document.uri.toString()
-        );
-        if (!editor) {
-            // No visible editor — try the command-based refresh as fallback
-            await vscode.commands.executeCommand('markdown.preview.refresh');
-            return;
-        }
-
-        const lastLine = document.lineAt(document.lineCount - 1);
-        const endPos = lastLine.range.end;
-
-        // Insert a space
-        await editor.edit(editBuilder => {
-            editBuilder.insert(endPos, ' ');
-        }, { undoStopBefore: false, undoStopAfter: false });
-
-        // Undo the space
-        await vscode.commands.executeCommand('undo');
+    private async _nudgeDocument(_document: vscode.TextDocument): Promise<void> {
+        await vscode.commands.executeCommand('markdown.preview.refresh');
     }
 
     /**

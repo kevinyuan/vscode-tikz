@@ -432,6 +432,22 @@ function marpSupportsEditablePptx(): boolean {
   }
 }
 
+function isLibreOfficeInstalled(): boolean {
+  try {
+    if (process.platform === 'darwin') {
+      return fs.existsSync('/Applications/LibreOffice.app');
+    } else if (process.platform === 'win32') {
+      execFileSync('where', ['soffice'], { encoding: 'utf-8', timeout: 5000 });
+      return true;
+    } else {
+      execFileSync('which', ['soffice'], { encoding: 'utf-8', timeout: 5000 });
+      return true;
+    }
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Run marp-cli to convert processed markdown to PPTX.
  */
@@ -479,6 +495,19 @@ const MARP_CLI_TIMEOUT = 60_000;
  * Export the active Marp document to PPTX, rendering TikZ blocks to SVG first.
  */
 async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
+  // Warn if LibreOffice is missing (needed for editable PPTX)
+  if (marpSupportsEditablePptx() && !isLibreOfficeInstalled()) {
+    const action = await vscode.window.showWarningMessage(
+      'LibreOffice is required for editable PPTX export. Without it, slides will be exported as non-editable images.',
+      'Download LibreOffice', 'Continue Anyway', 'Cancel'
+    );
+    if (action === 'Download LibreOffice') {
+      await vscode.env.openExternal(vscode.Uri.parse('https://www.libreoffice.org/download/download-libreoffice/'));
+      return;
+    }
+    if (action !== 'Continue Anyway') { return; }
+  }
+
   const inputPath = doc.uri.fsPath;
   const inputDir = path.dirname(inputPath);
   const inputBasename = path.basename(inputPath, '.md');

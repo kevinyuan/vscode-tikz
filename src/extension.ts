@@ -623,6 +623,9 @@ async function fixPptxOverlays(pptxPath: string): Promise<void> {
       const cx = parseInt(extMatch[1], 10);
       const cy = parseInt(extMatch[2], 10);
       if (cx < 12000000 || cy < 6800000) { return match; }
+      // Only remove white (FFFFFF) overlays; keep colored backgrounds
+      const fillMatch = match.match(/<a:solidFill>\s*<a:srgbClr\s+val="([^"]+)"/);
+      if (fillMatch && fillMatch[1] !== 'FFFFFF') { return match; }
       const textRegex = /<a:t>([^<]*)<\/a:t>/g;
       let tm;
       while ((tm = textRegex.exec(match)) !== null) {

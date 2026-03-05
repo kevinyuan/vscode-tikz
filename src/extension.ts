@@ -312,6 +312,15 @@ function registerEventHandlers(context: vscode.ExtensionContext): void {
     })
   );
 
+  // Release lastMarkdownDocument reference when the document closes
+  context.subscriptions.push(
+    vscode.workspace.onDidCloseTextDocument((doc) => {
+      if (lastMarkdownDocument === doc) {
+        lastMarkdownDocument = undefined;
+      }
+    })
+  );
+
   // Watch for document changes — trigger background rendering
   let debounceTimer: NodeJS.Timeout | undefined;
   context.subscriptions.push(
@@ -413,7 +422,19 @@ function runMarpCli(processedMdPath: string, outputPath: string, cwd: string, ti
       marpBin = '';
     }
 
-    const args = ['--pptx', '--allow-local-files', '--html', '--no-stdin', processedMdPath, '-o', outputPath];
+    // Check marp-cli version to decide whether to use --pptx-editable
+    const pptxArgs = ['--pptx'];
+    try {
+      const marpPkg = require('@marp-team/marp-cli/package.json');
+      const ver = (marpPkg.version || '').split('.').map(Number);
+      if (ver[0] > 4 || (ver[0] === 4 && ver[1] >= 1)) {
+        pptxArgs.push('--pptx-editable');
+      }
+    } catch {
+      // Version check failed, proceed without --pptx-editable
+    }
+
+    const args = [...pptxArgs, '--allow-local-files', '--html', '--no-stdin', processedMdPath, '-o', outputPath];
     let cmd: string;
     let cmdArgs: string[];
     if (marpBin) {
@@ -535,6 +556,16 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
           throw lastError;
         }
 
+        // Post-process: remove full-slide blank overlay shapes
+        // LibreOffice's ODP→PPTX conversion creates opaque white rectangles
+        // covering the entire slide that block clicking/selecting content.
+        try {
+          fixPptxOverlays(outputPath);
+          outputChannel.appendLine('[marp-export] Post-processed PPTX: removed overlay shapes');
+        } catch (ppErr: any) {
+          outputChannel.appendLine(`[marp-export] PPTX post-processing failed: ${ppErr.message}`);
+        }
+
         return outputPath;
       } finally {
         // Cleanup temp directory
@@ -563,6 +594,54 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
     } else if (action === 'Reveal in Finder') {
       await vscode.commands.executeCommand('revealFileInOS', vscode.Uri.file(result));
     }
+  }
+}
+
+/**
+ * Remove full-slide blank overlay shapes from editable PPTX and renumber IDs.
+ * LibreOffice's ODP→PPTX conversion generates opaque white rectangles
+ * that cover the entire slide, blocking interaction with real content.
+ * After removal, shape IDs are renumbered to avoid gaps that trigger
+ * PowerPoint's repair prompt.
+ */
+function fixPptxOverlays(pptxPath: string): void {
+  const AdmZip = require('adm-zip');
+  const zip = new AdmZip(pptxPath);
+  let modified = false;
+
+  for (const entry of zip.getEntries()) {
+    if (!/^ppt\/slides\/slide\d+\.xml$/.test(entry.entryName)) { continue; }
+
+    let xml = entry.getData().toString('utf-8');
+    const original = xml;
+
+    xml = xml.replace(/<p:sp>[\s\S]*?<\/p:sp>/g, (match: string) => {
+      const extMatch = match.match(/<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/);
+      if (!extMatch) { return match; }
+      const cx = parseInt(extMatch[1], 10);
+      const cy = parseInt(extMatch[2], 10);
+      if (cx < 12000000 || cy < 6800000) { return match; }
+      const textRegex = /<a:t>([^<]*)<\/a:t>/g;
+      let tm;
+      while ((tm = textRegex.exec(match)) !== null) {
+        if (tm[1].trim()) { return match; }
+      }
+      return '';
+    });
+
+    if (xml !== original) {
+      let nextId = 2;
+      xml = xml.replace(/<p:cNvPr\s+id="(\d+)"/g, (match: string, id: string) => {
+        if (id === '1') { return match; }
+        return `<p:cNvPr id="${nextId++}"`;
+      });
+      zip.updateFile(entry.entryName, Buffer.from(xml, 'utf-8'));
+      modified = true;
+    }
+  }
+
+  if (modified) {
+    zip.writeZip(pptxPath);
   }
 }
 

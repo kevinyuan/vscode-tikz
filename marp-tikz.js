@@ -138,15 +138,95 @@ async function main() {
 
     const { execSync } = require('child_process');
     const marpBin = 'npx @marp-team/marp-cli';
+
+    // Auto-enable --pptx-editable for Marp >= 4.1.0 when exporting PPTX
+    if (outputExt === '.pptx' && !marpArgs.includes('--pptx-editable')) {
+        try {
+            const verOut = execSync(`${marpBin} --version`, { encoding: 'utf-8', cwd: inputDir }).trim();
+            const verMatch = verOut.match(/(\d+\.\d+\.\d+)/);
+            if (verMatch) {
+                const [major, minor] = verMatch[1].split('.').map(Number);
+                if (major > 4 || (major === 4 && minor >= 1)) {
+                    marpArgs.push('--pptx-editable');
+                    console.log(`Marp v${verMatch[1]} detected, enabling --pptx-editable`);
+                }
+            }
+        } catch (_) {
+            // Version check failed, proceed without --pptx-editable
+        }
+    }
+
     const cmd = `${marpBin} ${marpArgs.join(' ')} --allow-local-files --html "${processedFile}" -o "${outputFile}"`;
 
     console.log(`\nRunning: ${cmd}\n`);
     execSync(cmd, { stdio: 'inherit', cwd: inputDir });
 
+    // Post-process editable PPTX: remove full-slide blank overlay shapes
+    // LibreOffice's ODP→PPTX conversion creates opaque white rectangles
+    // covering the entire slide that block clicking/selecting real content.
+    if (marpArgs.includes('--pptx-editable') && outputExt === '.pptx') {
+        try {
+            await fixPptxOverlays(outputFile);
+            console.log('Post-processed PPTX: removed overlay shapes.');
+        } catch (err) {
+            console.warn(`PPTX post-processing failed: ${err.message}`);
+        }
+    }
+
     // Cleanup
     fs.unlinkSync(processedFile);
     fs.rmSync(imgDir, { recursive: true, force: true });
     console.log('Cleaned up temporary files.');
+}
+
+/**
+ * Remove full-slide blank overlay shapes from editable PPTX and renumber IDs.
+ * LibreOffice's ODP→PPTX conversion creates opaque white rectangles
+ * covering the entire slide that block clicking/selecting real content.
+ * After removal, shape IDs are renumbered to be contiguous (PowerPoint
+ * shows a repair prompt when IDs have gaps).
+ */
+async function fixPptxOverlays(pptxPath) {
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(pptxPath);
+    let modified = false;
+
+    for (const entry of zip.getEntries()) {
+        if (!entry.entryName.match(/^ppt\/slides\/slide\d+\.xml$/)) continue;
+
+        let xml = entry.getData().toString('utf-8');
+        const original = xml;
+
+        // Remove full-slide blank overlay shapes
+        xml = xml.replace(/<p:sp>[\s\S]*?<\/p:sp>/g, (match) => {
+            const extMatch = match.match(/<a:ext\s+cx="(\d+)"\s+cy="(\d+)"/);
+            if (!extMatch) return match;
+            const cx = parseInt(extMatch[1], 10);
+            const cy = parseInt(extMatch[2], 10);
+            if (cx < 12000000 || cy < 6800000) return match;
+            const textRegex = /<a:t>([^<]*)<\/a:t>/g;
+            let tm;
+            while ((tm = textRegex.exec(match)) !== null) {
+                if (tm[1].trim()) return match;
+            }
+            return '';
+        });
+
+        // Renumber shape IDs to be contiguous (starting from 2; 1 = group)
+        if (xml !== original) {
+            let nextId = 2;
+            xml = xml.replace(/<p:cNvPr\s+id="(\d+)"/g, (match, id) => {
+                if (id === '1') return match; // group shape stays id=1
+                return `<p:cNvPr id="${nextId++}"`;
+            });
+            zip.updateFile(entry.entryName, Buffer.from(xml, 'utf-8'));
+            modified = true;
+        }
+    }
+
+    if (modified) {
+        zip.writeZip(pptxPath);
+    }
 }
 
 main().catch(err => {

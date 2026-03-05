@@ -23,6 +23,7 @@ export interface CacheStats {
 export class CacheManager {
     private static readonly CACHE_KEY_PREFIX = 'tikzjax.cache.';
     private static readonly CACHE_INDEX_KEY = 'tikzjax.cache.index';
+    private static readonly MAX_PERSISTENT_ENTRIES = 128;
 
     private globalState: vscode.Memento;
 
@@ -96,8 +97,9 @@ export class CacheManager {
             accessCount: diagram.accessCount
         });
 
-        // Update the cache index
+        // Update the cache index and evict oldest if over capacity
         await this.addToIndex(hash);
+        await this.evictIfNeeded();
     }
 
     /**
@@ -188,12 +190,30 @@ export class CacheManager {
 
     /**
      * Removes a hash from the cache index.
-     * 
+     *
      * @param hash - Hash to remove from the index
      */
     private async removeFromIndex(hash: string): Promise<void> {
         const index = await this.getIndex();
         const newIndex = index.filter(h => h !== hash);
+        await this.globalState.update(CacheManager.CACHE_INDEX_KEY, newIndex);
+    }
+
+    /**
+     * Evicts the oldest entries when the cache exceeds MAX_PERSISTENT_ENTRIES.
+     * The index is ordered by insertion time, so oldest entries are at the front.
+     */
+    private async evictIfNeeded(): Promise<void> {
+        const index = await this.getIndex();
+        if (index.length <= CacheManager.MAX_PERSISTENT_ENTRIES) { return; }
+
+        const toEvict = index.slice(0, index.length - CacheManager.MAX_PERSISTENT_ENTRIES);
+        for (const hash of toEvict) {
+            const key = this.getCacheKey(hash);
+            await this.globalState.update(key, undefined);
+        }
+
+        const newIndex = index.slice(index.length - CacheManager.MAX_PERSISTENT_ENTRIES);
         await this.globalState.update(CacheManager.CACHE_INDEX_KEY, newIndex);
     }
 }

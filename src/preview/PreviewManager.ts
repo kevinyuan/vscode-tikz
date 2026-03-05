@@ -20,8 +20,9 @@ export class PreviewManager {
     private _tikzjaxLoaded = false;
     private _tikzjaxLoadPromise: Promise<void> | null = null;
 
-    /** In-memory SVG cache: hash → { svg?, error? } */
+    /** In-memory SVG cache: hash → { svg?, error? }. Capped at MAX_MEMORY_CACHE entries (LRU). */
     private readonly _svgCache = new Map<string, { svg?: string; error?: string }>();
+    private static readonly MAX_MEMORY_CACHE = 64;
 
     private readonly _outputChannel: vscode.OutputChannel;
 
@@ -89,7 +90,7 @@ export class PreviewManager {
                     this._outputChannel.appendLine(`block ${block.hash.slice(0, 8)} — found in persistent cache`);
                     const darkMode = this._isDarkMode();
                     const processed = this._applyPostProcessing(cached.svg, darkMode);
-                    this._svgCache.set(block.hash, { svg: processed });
+                    this._setSvgCache(block.hash, { svg: processed });
                     renderedCount++;
                     // Nudge after each cached block so it appears immediately
                     await this._nudgeDocument(document);
@@ -127,13 +128,13 @@ export class PreviewManager {
      */
     private async _renderSingleBlock(hash: string, source: string): Promise<void> {
         // Chain this render after any currently running render
-        this._renderChain = this._renderChain.then(async () => {
+        const renderPromise = this._renderChain.then(async () => {
             this._outputChannel.appendLine(`block ${hash.slice(0, 8)} — rendering...`);
             try {
                 const svg = await this._renderTikzToSvg(source);
                 const darkMode = this._isDarkMode();
                 const processed = this._applyPostProcessing(svg, darkMode);
-                this._svgCache.set(hash, { svg: processed });
+                this._setSvgCache(hash, { svg: processed });
 
                 // Persist to cache
                 const entry = new CacheEntry(hash, svg);
@@ -142,13 +143,33 @@ export class PreviewManager {
                 this._outputChannel.appendLine(`block ${hash.slice(0, 8)} — render OK`);
             } catch (err: any) {
                 const errorMsg = this._extractTexError(err);
-                this._svgCache.set(hash, { error: errorMsg });
+                this._setSvgCache(hash, { error: errorMsg });
                 this._outputChannel.appendLine(`block ${hash.slice(0, 8)} — render FAILED: ${errorMsg.slice(0, 120)}`);
             }
         });
 
+        // Reset the chain to a resolved promise to avoid unbounded closure chain growth
+        this._renderChain = renderPromise.then(() => {}, () => {});
+
         // Wait for this block's render to complete
-        await this._renderChain;
+        await renderPromise;
+    }
+
+    /**
+     * Set an entry in the in-memory SVG cache with LRU eviction.
+     */
+    private _setSvgCache(hash: string, value: { svg?: string; error?: string }): void {
+        // Delete first so re-insertion moves it to the end (Map preserves insertion order)
+        this._svgCache.delete(hash);
+        this._svgCache.set(hash, value);
+
+        // Evict oldest entries if over capacity
+        while (this._svgCache.size > PreviewManager.MAX_MEMORY_CACHE) {
+            const oldest = this._svgCache.keys().next().value;
+            if (oldest !== undefined) {
+                this._svgCache.delete(oldest);
+            }
+        }
     }
 
     /**
@@ -176,12 +197,17 @@ export class PreviewManager {
             tikzLibraries: this._detectTikzLibraries(processed).join(','),
         });
 
+        let timer: ReturnType<typeof setTimeout>;
         const timeoutPromise = new Promise<never>((_resolve, reject) => {
-            setTimeout(() => reject(new Error(`Render timed out after ${timeout}ms`)), timeout);
+            timer = setTimeout(() => reject(new Error(`Render timed out after ${timeout}ms`)), timeout);
         });
 
-        const svg = await Promise.race([svgPromise, timeoutPromise]);
-        return svg;
+        try {
+            const svg = await Promise.race([svgPromise, timeoutPromise]);
+            return svg;
+        } finally {
+            clearTimeout(timer!);
+        }
     }
 
     /**

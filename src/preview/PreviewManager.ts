@@ -173,6 +173,19 @@ export class PreviewManager {
     }
 
     /**
+     * Public render method for export — serialized through the render chain.
+     */
+    async renderTikzToSvg(source: string): Promise<string> {
+        let result: string;
+        const renderPromise = this._renderChain.then(async () => {
+            result = await this._renderTikzToSvg(source);
+        });
+        this._renderChain = renderPromise.then(() => {}, () => {});
+        await renderPromise;
+        return result!;
+    }
+
+    /**
      * Render TikZ source to SVG using node-tikzjax.
      * Handles preprocessing, pgfplots compat downgrade, and timeout.
      */

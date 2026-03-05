@@ -8,7 +8,7 @@ import { CacheManager } from './core/CacheManager';
 import { ConfigurationManager } from './config/ConfigurationManager';
 import { PreviewManager } from './preview/PreviewManager';
 import { generateHash } from './utils/hash';
-import { preprocessSource } from './utils/preprocessor';
+
 
 let previewManager: PreviewManager | undefined;
 let configManager: ConfigurationManager | undefined;
@@ -357,43 +357,6 @@ function formatBytes(bytes: number): string {
 }
 
 /**
- * Render TikZ source to SVG using node-tikzjax directly.
- * Mirrors the logic in marp-tikz.js / PreviewManager._renderTikzToSvg.
- */
-async function renderTikzSourceToSvg(source: string): Promise<string> {
-  const tex2svg = (await import('node-tikzjax')).default;
-
-  let processed = preprocessSource(source);
-
-  // Downgrade pgfplots compat (engine limitation)
-  processed = processed.replace(
-    /\\pgfplotsset\s*\{\s*compat\s*=\s*[\d.]+\s*\}/,
-    '\\pgfplotsset{compat=1.16}'
-  );
-
-  // Detect packages
-  const packages: Record<string, string> = {};
-  const pkgRegex = /\\usepackage(?:\[([^\]]*)\])?\{([^}]+)\}/g;
-  let m;
-  while ((m = pkgRegex.exec(processed)) !== null) {
-    packages[m[2].trim()] = m[1] || '';
-  }
-
-  // Detect tikz libraries
-  const libs: string[] = [];
-  const libRegex = /\\usetikzlibrary\{([^}]+)\}/g;
-  while ((m = libRegex.exec(processed)) !== null) {
-    libs.push(...m[1].split(',').map(s => s.trim()).filter(Boolean));
-  }
-
-  return tex2svg(processed, {
-    showConsole: false,
-    texPackages: packages,
-    tikzLibraries: libs.join(','),
-  });
-}
-
-/**
  * Fix SVG width/height to match viewBox (same as marp-tikz.js fixSvgDimensions).
  */
 function fixSvgDimensions(svg: string): string {
@@ -539,7 +502,7 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
             if (token.isCancellationRequested) { return; }
             progress.report({ message: `Rendering diagram ${i + 1}/${blocks.length}…` });
             try {
-              const svg = await renderTikzSourceToSvg(blocks[i].source);
+              const svg = await previewManager!.renderTikzToSvg(blocks[i].source);
               const fixed = fixSvgDimensions(svg);
               const svgFile = path.join(imgDir, `tikz-${i + 1}.svg`);
               fs.writeFileSync(svgFile, fixed, 'utf-8');

@@ -1,7 +1,7 @@
 {
   "name": "vscode-tikzjax",
   "displayName": "TikZ in Markdown",
-  "description": "Render LaTeX and TikZ diagrams in Markdown files using TikZJax",
+  "description": "Render LaTeX and TikZ diagrams in Markdown — export Marp slides to editable PPTX",
   "version": "0.3.1",
   "publisher": "kevinyuan",
   "icon": "icon.png",

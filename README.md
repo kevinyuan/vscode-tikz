@@ -3,7 +3,7 @@
 [![VS Marketplace](https://img.shields.io/visual-studio-marketplace/v/kevinyuan.vscode-tikzjax?label=VS%20Marketplace&logo=visual-studio-code)](https://marketplace.visualstudio.com/items?itemName=kevinyuan.vscode-tikzjax)
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/kevinyuan.vscode-tikzjax)](https://marketplace.visualstudio.com/items?itemName=kevinyuan.vscode-tikzjax)
 
-Render beautiful LaTeX and TikZ diagrams directly in your Markdown files. Create mathematical diagrams, circuit schematics, chemical structures, commutative diagrams, and more — all with live preview. Works with both standard Markdown preview and [Marp](https://marp.app/) slide decks.
+Render beautiful LaTeX and TikZ diagrams directly in your Markdown files. Create mathematical diagrams, circuit schematics, chemical structures, commutative diagrams, and more — all with live preview. Works with both standard Markdown preview and [Marp](https://marp.app/) slide decks, with one-click export to **editable PPTX**.
 
 ## Gallery
 
@@ -29,7 +29,7 @@ Render beautiful LaTeX and TikZ diagrams directly in your Markdown files. Create
 ## Features
 
 - **Live Preview**: See your TikZ diagrams rendered in real-time as you type
-- **Marp Compatibility**: TikZ diagrams render inside Marp slide decks (`marp: true`)
+- **Marp Compatibility**: TikZ diagrams render inside Marp slide decks (`marp: true`), export to **editable PPTX**
 - **Rich Package Support**: Use chemfig, circuitikz, pgfplots, tikz-cd, and more
 - **Dark Mode**: Automatic color inversion for seamless dark theme integration
 - **Smart Caching**: Previously rendered diagrams load instantly
@@ -314,18 +314,18 @@ Default position for the preview panel:
 }
 ```
 
-## Export Marp Slides to PPTX
+## Export Marp Slides to Editable PPTX
 
-For Marp slide decks containing TikZ diagrams, you can export directly to PPTX from VS Code. When a Marp file is open (`marp: true` in frontmatter), an export button appears in the editor title bar — visible in both the editor and preview modes.
+For Marp slide decks containing TikZ diagrams, you can export directly to **editable PPTX** from VS Code. When a Marp file is open (`marp: true` in frontmatter), an export button appears in the editor title bar — visible in both the editor and preview modes.
 
 Click the button to:
 1. Render all TikZ diagrams to SVG
-2. Run `marp-cli` to produce the final `.pptx` file
-3. Save the output next to the source file
+2. Run `marp-cli` with `--pptx-editable` to produce an editable `.pptx` file
+3. Save the output next to the source file (timestamped)
 
-The export shows progress in a notification with cancel support, and offers "Open File" / "Reveal in Finder" actions on completion.
+The exported PPTX contains editable text and shapes — not just images. CSS backgrounds, images, and colored slide backgrounds are preserved. The export shows progress in a notification with cancel support, and offers "Open File" / "Reveal in Finder" actions on completion.
 
-> **Prerequisite**: Install marp-cli globally or in your project: `npm install -g @marp-team/marp-cli`
+> **Prerequisites**: Install [marp-cli](https://github.com/marp-team/marp-cli) (`npm install -g @marp-team/marp-cli`) and [LibreOffice](https://www.libreoffice.org/) (required for editable PPTX conversion).
 
 ### CLI Export
 

@@ -624,6 +624,13 @@ async function fixPptxOverlays(pptxPath: string): Promise<void> {
   const zip = await JSZip.loadAsync(fs.readFileSync(pptxPath));
   let modified = false;
 
+  // Read slide dimensions from presentation.xml
+  const presXml = await zip.file('ppt/presentation.xml')!.async('string');
+  const sldSzMatch = presXml.match(/<p:sldSz\s+cx="(\d+)"\s+cy="(\d+)"/);
+  if (!sldSzMatch) { return; }
+  const slideW = parseInt(sldSzMatch[1], 10);
+  const slideH = parseInt(sldSzMatch[2], 10);
+
   const slidePattern = /^ppt\/slides\/slide\d+\.xml$/;
   for (const filename of Object.keys(zip.files)) {
     if (!slidePattern.test(filename)) { continue; }
@@ -636,7 +643,8 @@ async function fixPptxOverlays(pptxPath: string): Promise<void> {
       if (!extMatch) { return match; }
       const cx = parseInt(extMatch[1], 10);
       const cy = parseInt(extMatch[2], 10);
-      if (cx < 12000000 || cy < 6800000) { return match; }
+      // Shape must cover >= 98% of the slide to be considered an overlay
+      if (cx < slideW * 0.98 || cy < slideH * 0.98) { return match; }
       // Only remove white (FFFFFF) overlays; keep colored backgrounds
       const fillMatch = match.match(/<a:solidFill>\s*<a:srgbClr\s+val="([^"]+)"/);
       if (fillMatch && fillMatch[1] !== 'FFFFFF') { return match; }

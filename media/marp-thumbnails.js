@@ -130,8 +130,9 @@
             '  border-bottom: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.2));',
             '  margin-bottom: 6px;',
             '}',
+            '#marp-thumb-toolbar .marp-toolbar-spacer { flex: 1; }',
             '.marp-toolbar-btn {',
-            '  flex: 1; display: flex; align-items: center; justify-content: center;',
+            '  flex: 0 0 24px; display: flex; align-items: center; justify-content: center;',
             '  height: 24px; border: none; border-radius: 3px; cursor: pointer;',
             '  background: transparent;',
             '  color: var(--vscode-foreground, #ccc); opacity: 0.6;',
@@ -175,7 +176,6 @@
             '.marp-outline-item:hover { background: var(--vscode-list-hoverBackground, rgba(128,128,128,0.15)); }',
             '.marp-outline-item.active { background: var(--vscode-list-activeSelectionBackground, rgba(4,57,94,0.6)); color: var(--vscode-list-activeSelectionForeground, #fff); }',
             '.marp-outline-num { opacity: 0.5; font-size: 11px; min-width: 16px; }',
-            '.marp-outline-icon { opacity: 0.7; font-size: 11px; }',
             '.marp-outline-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
         ].join('\n');
         document.head.appendChild(styleEl);
@@ -187,7 +187,6 @@
         var w = getSidebarWidth();
         if (sidebar) { sidebar.style.width = w + 'px'; }
         if (isVisible) {
-            if (toggle) { toggle.style.left = (w + 8) + 'px'; }
             document.body.style.marginLeft = w + 'px';
         }
     }
@@ -198,14 +197,13 @@
         toggle.id = 'marp-thumb-toggle';
         toggle.title = 'Toggle slide thumbnails';
         // Restore state from isVisible
-        toggle.textContent = isVisible ? '\u25C0' : '\u25B6';
-        toggle.style.left = isVisible ? (getSidebarWidth() + 8) + 'px' : '8px';
+        toggle.textContent = '\u2630';
+        toggle.style.display = isVisible ? 'none' : 'flex';
         toggle.addEventListener('click', function () {
-            isVisible = !isVisible;
-            if (sidebar) { sidebar.classList.toggle('collapsed', !isVisible); }
-            toggle.textContent = isVisible ? '\u25C0' : '\u25B6';
-            toggle.style.left = isVisible ? (getSidebarWidth() + 8) + 'px' : '8px';
-            document.body.style.marginLeft = isVisible ? getSidebarWidth() + 'px' : '0';
+            isVisible = true;
+            if (sidebar) { sidebar.classList.remove('collapsed'); }
+            toggle.style.display = 'none';
+            document.body.style.marginLeft = getSidebarWidth() + 'px';
         });
         document.body.appendChild(toggle);
     }
@@ -230,7 +228,7 @@
         var modes = [
             { id: 'small',   icon: '\u25A6', title: 'Small thumbnails' },
             { id: 'big',     icon: '\u2B1C', title: 'Large thumbnails' },
-            { id: 'outline', icon: '\u2630', title: 'Outline' },
+            { id: 'outline', icon: '\u2261', title: 'Outline' },
         ];
         modes.forEach(function (m) {
             var btn = document.createElement('button');
@@ -249,19 +247,20 @@
             toolbar.appendChild(btn);
         });
 
+        // Spacer pushes close button to the right
+        var spacer = document.createElement('div');
+        spacer.className = 'marp-toolbar-spacer';
+        toolbar.appendChild(spacer);
+
         // Close button
         var closeBtn = document.createElement('button');
         closeBtn.className = 'marp-toolbar-btn';
         closeBtn.textContent = '\u2715';
         closeBtn.title = 'Close panel';
-        closeBtn.style.flex = '0 0 24px';
         closeBtn.addEventListener('click', function () {
             isVisible = false;
             if (sidebar) { sidebar.classList.add('collapsed'); }
-            if (toggle) {
-                toggle.textContent = '\u25B6';
-                toggle.style.left = '8px';
-            }
+            if (toggle) { toggle.style.display = 'flex'; }
             document.body.style.marginLeft = '0';
         });
         toolbar.appendChild(closeBtn);
@@ -414,24 +413,14 @@
                 cssClass = origSection.getAttribute('class') || '';
             }
 
-            var icon = document.createElement('span');
-            icon.className = 'marp-outline-icon';
-            if (/\btitle\b/.test(cssClass)) {
-                icon.textContent = '\u2302'; // house
-            } else if (/\bsection[-_]?divider\b/.test(cssClass)) {
-                icon.textContent = '\u2759'; // section
-            } else if (/\bthankyou\b/.test(cssClass)) {
-                icon.textContent = '\u2665'; // heart
-            } else {
-                icon.textContent = '\u25A2'; // square
-            }
+            var displayText = heading || 'Slide ' + (i + 1);
 
             var label = document.createElement('span');
             label.className = 'marp-outline-label';
-            label.textContent = heading || 'Slide ' + (i + 1);
+            label.textContent = displayText;
 
+            item.title = displayText;
             item.appendChild(num);
-            item.appendChild(icon);
             item.appendChild(label);
 
             item.addEventListener('click', (function (targetSlide, targetItem) {
@@ -507,10 +496,7 @@
             if (desired === isVisible) { return; }
             isVisible = desired;
             if (sidebar) { sidebar.classList.toggle('collapsed', !isVisible); }
-            if (toggle) {
-                toggle.textContent = isVisible ? '\u25C0' : '\u25B6';
-                toggle.style.left = isVisible ? (getSidebarWidth() + 8) + 'px' : '8px';
-            }
+            if (toggle) { toggle.style.display = isVisible ? 'none' : 'flex'; }
             document.body.style.marginLeft = isVisible ? getSidebarWidth() + 'px' : '0';
         }
     }

@@ -197,7 +197,9 @@
         toggle = document.createElement('div');
         toggle.id = 'marp-thumb-toggle';
         toggle.title = 'Toggle slide thumbnails';
-        toggle.textContent = '\u25B6';
+        // Restore state from isVisible
+        toggle.textContent = isVisible ? '\u25C0' : '\u25B6';
+        toggle.style.left = isVisible ? (getSidebarWidth() + 8) + 'px' : '8px';
         toggle.addEventListener('click', function () {
             isVisible = !isVisible;
             if (sidebar) { sidebar.classList.toggle('collapsed', !isVisible); }
@@ -212,9 +214,11 @@
         if (sidebar && document.body.contains(sidebar)) { return sidebar; }
         sidebar = document.createElement('div');
         sidebar.id = 'marp-thumb-sidebar';
-        sidebar.classList.add('collapsed');
+        if (!isVisible) { sidebar.classList.add('collapsed'); }
         sidebar.style.width = getSidebarWidth() + 'px';
         document.body.appendChild(sidebar);
+        // Restore body margin if visible
+        document.body.style.marginLeft = isVisible ? getSidebarWidth() + 'px' : '0';
         return sidebar;
     }
 
@@ -491,15 +495,17 @@
         for (var i = 0; i < slides.length; i++) { scrollObserver.observe(slides[i]); }
     }
 
-    var lastToggleCounter = 0;
+    var lastToggleSeq = 0;
     function checkToggleSignal() {
         var el = document.querySelector('[data-marp-thumb-toggle]');
         if (!el) { return; }
-        var counter = parseInt(el.getAttribute('data-marp-thumb-toggle'), 10);
-        if (counter > lastToggleCounter) {
-            lastToggleCounter = counter;
-            // Toggle visibility
-            isVisible = !isVisible;
+        var seq = parseInt(el.getAttribute('data-marp-thumb-toggle'), 10);
+        if (seq > lastToggleSeq) {
+            lastToggleSeq = seq;
+            // Apply the desired state (not a relative toggle)
+            var desired = el.getAttribute('data-marp-thumb-visible') === 'true';
+            if (desired === isVisible) { return; }
+            isVisible = desired;
             if (sidebar) { sidebar.classList.toggle('collapsed', !isVisible); }
             if (toggle) {
                 toggle.textContent = isVisible ? '\u25C0' : '\u25B6';

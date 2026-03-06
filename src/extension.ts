@@ -20,8 +20,9 @@ let outputChannel: vscode.OutputChannel;
 /** Track the last known markdown document so we don't depend on activeTextEditor */
 let lastMarkdownDocument: vscode.TextDocument | undefined;
 
-/** Counter incremented each time the toggle command fires; injected into preview via markdown-it */
-let thumbToggleCounter = 0;
+/** Toggle state injected into preview via tikz fence output */
+let thumbPanelVisible = false;
+let thumbToggleSeq = 0;
 
 
 export function activate(context: vscode.ExtensionContext) {
@@ -62,7 +63,9 @@ export function activate(context: vscode.ExtensionContext) {
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tikzjax.toggleThumbnails', async () => {
-      thumbToggleCounter++;
+      thumbPanelVisible = !thumbPanelVisible;
+      thumbToggleSeq++;
+      outputChannel.appendLine(`[toggle] visible=${thumbPanelVisible} seq=${thumbToggleSeq}`);
       await vscode.commands.executeCommand('markdown.preview.refresh');
     })
   );
@@ -116,17 +119,22 @@ export function activate(context: vscode.ExtensionContext) {
     const result = previewManager?.getSvg(hash);
     outputChannel.appendLine(`[render] content length=${source.length} trimmed length=${source.trim().length} hash=${hash.slice(0, 8)}`);
 
+    // Piggyback toggle signal on tikz fence output (raw HTML, bypasses Marp's html sanitization)
+    const toggleSignal = thumbToggleSeq > 0
+      ? `<div data-marp-thumb-toggle="${thumbToggleSeq}" data-marp-thumb-visible="${thumbPanelVisible}" style="display:none"></div>`
+      : '';
+
     if (result?.svg) {
       outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → cached SVG`);
-      return `<div class="tikz-diagram" style="text-align:center;margin:1em 0">${result.svg}</div>\n`;
+      return `<div class="tikz-diagram" style="text-align:center;margin:1em 0">${result.svg}</div>${toggleSignal}\n`;
     } else if (result?.error) {
       outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → error: ${result.error.slice(0, 80)}`);
       const escaped = escapeHtml(result.error);
-      return `<div class="tikz-diagram tikz-error" style="text-align:center;margin:1em 0;color:#c00"><div class="tikz-error-title">⚠ Rendering Error</div><pre class="tikz-error-message" style="white-space:pre-wrap">${escaped}</pre></div>\n`;
+      return `<div class="tikz-diagram tikz-error" style="text-align:center;margin:1em 0;color:#c00"><div class="tikz-error-title">⚠ Rendering Error</div><pre class="tikz-error-message" style="white-space:pre-wrap">${escaped}</pre></div>${toggleSignal}\n`;
     } else {
       outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → not cached, triggering background render`);
       scheduleBackgroundRender();
-      return `<div class="tikz-diagram tikz-loading" style="text-align:center;margin:1em 0"><span class="tikz-spinner"></span> Rendering TikZ diagram…</div>\n`;
+      return `<div class="tikz-diagram tikz-loading" style="text-align:center;margin:1em 0"><span class="tikz-spinner"></span> Rendering TikZ diagram…</div>${toggleSignal}\n`;
     }
   }
 
@@ -198,20 +206,11 @@ export function activate(context: vscode.ExtensionContext) {
         };
       };
 
-      /** Append a hidden html_block token carrying the thumbnail toggle counter */
-      const injectToggleSignal = (tokens: any[]): void => {
-        if (thumbToggleCounter <= 0) { return; }
-        const token = new md.Token('html_block', '', 0);
-        token.content = `<div data-marp-thumb-toggle="${thumbToggleCounter}" style="display:none"></div>\n`;
-        tokens.push(token);
-      };
-
       // Wrap md.parse synchronously (handles case where we load after Marp)
       const origParse = md.parse.bind(md);
       md.parse = function (src: string, env?: any) {
         const tokens = origParse(src, env);
         installFenceOnMarpInstance();
-        injectToggleSignal(tokens);
         return tokens;
       };
 
@@ -224,7 +223,6 @@ export function activate(context: vscode.ExtensionContext) {
           outputChannel.appendLine(`[parse-wrapper] src.length=${src.length}`);
           const tokens = currentParse.call(md, src, env);
           installFenceOnMarpInstance();
-          injectToggleSignal(tokens);
           return tokens;
         };
         outputChannel.appendLine('[init] Installed tikz parse wrapper via setTimeout(0)');

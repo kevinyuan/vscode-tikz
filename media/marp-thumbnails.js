@@ -491,6 +491,24 @@
         for (var i = 0; i < slides.length; i++) { scrollObserver.observe(slides[i]); }
     }
 
+    var lastToggleCounter = 0;
+    function checkToggleSignal() {
+        var el = document.querySelector('[data-marp-thumb-toggle]');
+        if (!el) { return; }
+        var counter = parseInt(el.getAttribute('data-marp-thumb-toggle'), 10);
+        if (counter > lastToggleCounter) {
+            lastToggleCounter = counter;
+            // Toggle visibility
+            isVisible = !isVisible;
+            if (sidebar) { sidebar.classList.toggle('collapsed', !isVisible); }
+            if (toggle) {
+                toggle.textContent = isVisible ? '\u25C0' : '\u25B6';
+                toggle.style.left = isVisible ? (getSidebarWidth() + 8) + 'px' : '8px';
+            }
+            document.body.style.marginLeft = isVisible ? getSidebarWidth() + 'px' : '0';
+        }
+    }
+
     function init() {
         buildThumbnails();
         // Retry a few times in case Marp hasn't rendered SVGs yet
@@ -504,7 +522,10 @@
         var debounceTimer = null;
         var observer = new MutationObserver(function () {
             clearTimeout(debounceTimer);
-            debounceTimer = setTimeout(buildThumbnails, 300);
+            debounceTimer = setTimeout(function () {
+                buildThumbnails();
+                checkToggleSignal();
+            }, 300);
         });
         observer.observe(document.body, { childList: true, subtree: true });
     }

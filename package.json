@@ -91,6 +91,12 @@
         "title": "Export Marp Slides to PPTX",
         "category": "TikZ",
         "icon": "$(desktop-download)"
+      },
+      {
+        "command": "tikzjax.toggleThumbnails",
+        "title": "Toggle Slide Thumbnails",
+        "category": "TikZ",
+        "when": "editorLangId == markdown"
       }
     ],
     "menus": {

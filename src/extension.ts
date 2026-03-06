@@ -20,6 +20,9 @@ let outputChannel: vscode.OutputChannel;
 /** Track the last known markdown document so we don't depend on activeTextEditor */
 let lastMarkdownDocument: vscode.TextDocument | undefined;
 
+/** Counter incremented each time the toggle command fires; injected into preview via markdown-it */
+let thumbToggleCounter = 0;
+
 
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('TikZJax');
@@ -56,6 +59,13 @@ export function activate(context: vscode.ExtensionContext) {
   // Marp slide navigator
   const slideNavigator = new MarpSlideNavigator();
   vscode.window.registerTreeDataProvider('tikzMarpSlides', slideNavigator);
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tikzjax.toggleThumbnails', async () => {
+      thumbToggleCounter++;
+      await vscode.commands.executeCommand('markdown.preview.refresh');
+    })
+  );
 
   context.subscriptions.push(
     vscode.commands.registerCommand('tikzjax.goToSlide', async (line: number) => {
@@ -188,11 +198,20 @@ export function activate(context: vscode.ExtensionContext) {
         };
       };
 
+      /** Append a hidden html_block token carrying the thumbnail toggle counter */
+      const injectToggleSignal = (tokens: any[]): void => {
+        if (thumbToggleCounter <= 0) { return; }
+        const token = new md.Token('html_block', '', 0);
+        token.content = `<div data-marp-thumb-toggle="${thumbToggleCounter}" style="display:none"></div>\n`;
+        tokens.push(token);
+      };
+
       // Wrap md.parse synchronously (handles case where we load after Marp)
       const origParse = md.parse.bind(md);
       md.parse = function (src: string, env?: any) {
         const tokens = origParse(src, env);
         installFenceOnMarpInstance();
+        injectToggleSignal(tokens);
         return tokens;
       };
 
@@ -205,6 +224,7 @@ export function activate(context: vscode.ExtensionContext) {
           outputChannel.appendLine(`[parse-wrapper] src.length=${src.length}`);
           const tokens = currentParse.call(md, src, env);
           installFenceOnMarpInstance();
+          injectToggleSignal(tokens);
           return tokens;
         };
         outputChannel.appendLine('[init] Installed tikz parse wrapper via setTimeout(0)');

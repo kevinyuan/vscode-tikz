@@ -7,6 +7,7 @@ import { DocumentParser } from './core/DocumentParser';
 import { CacheManager } from './core/CacheManager';
 import { ConfigurationManager } from './config/ConfigurationManager';
 import { PreviewManager } from './preview/PreviewManager';
+import { MarpSlideNavigator } from './preview/MarpSlideNavigator';
 import { generateHash } from './utils/hash';
 
 
@@ -18,6 +19,7 @@ let outputChannel: vscode.OutputChannel;
 
 /** Track the last known markdown document so we don't depend on activeTextEditor */
 let lastMarkdownDocument: vscode.TextDocument | undefined;
+
 
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('TikZJax');
@@ -50,6 +52,43 @@ export function activate(context: vscode.ExtensionContext) {
 
   registerCommands(context);
   registerEventHandlers(context);
+
+  // Marp slide navigator
+  const slideNavigator = new MarpSlideNavigator();
+  vscode.window.registerTreeDataProvider('tikzMarpSlides', slideNavigator);
+
+  context.subscriptions.push(
+    vscode.commands.registerCommand('tikzjax.goToSlide', async (line: number) => {
+      const doc = lastMarkdownDocument || vscode.window.visibleTextEditors.find(
+        e => e.document.languageId === 'markdown'
+      )?.document;
+      if (!doc) { return; }
+      // Move cursor if editor is already visible (don't force editor open)
+      const editor = vscode.window.visibleTextEditors.find(e => e.document.uri.toString() === doc.uri.toString());
+      if (editor) {
+        const pos = new vscode.Position(line, 0);
+        editor.selection = new vscode.Selection(pos, pos);
+        editor.revealRange(new vscode.Range(pos, pos), vscode.TextEditorRevealType.AtTop);
+      }
+    })
+  );
+  // Refresh navigator and thumbnails on document changes and editor switches
+  const refreshNavigator = () => {
+    const doc = lastMarkdownDocument || vscode.window.activeTextEditor?.document;
+    if (doc?.languageId === 'markdown') {
+      slideNavigator.refresh(doc);
+    }
+  };
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeTextDocument(e => {
+      if (e.document.languageId === 'markdown') {
+        slideNavigator.refresh(e.document);
+      }
+    }),
+    vscode.window.onDidChangeActiveTextEditor(() => refreshNavigator()),
+    vscode.window.onDidChangeVisibleTextEditors(() => refreshNavigator())
+  );
+  refreshNavigator();
 
   // Track the active markdown document
   if (vscode.window.activeTextEditor?.document.languageId === 'markdown') {

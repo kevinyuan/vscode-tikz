@@ -46,6 +46,9 @@
     "markdown.previewStyles": [
       "./media/tikz-preview.css"
     ],
+    "markdown.previewScripts": [
+      "./media/marp-thumbnails.js"
+    ],
     "grammars": [
       {
         "scopeName": "markdown.tikz.codeblock",
@@ -106,6 +109,15 @@
           "command": "tikzjax.exportMarpPptx",
           "group": "navigation",
           "when": "activeCustomEditorId == 'vscode.markdown.preview.editor' && tikzjax.isMarpFile"
+        }
+      ]
+    },
+    "views": {
+      "explorer": [
+        {
+          "id": "tikzMarpSlides",
+          "name": "Marp Slides",
+          "when": "tikzjax.isMarpFile"
         }
       ]
     },

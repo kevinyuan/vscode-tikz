@@ -14,6 +14,10 @@
     var viewMode = 'small'; // 'small' | 'big' | 'outline'
     var scrollObserver = null;
     var styleEl = null;
+    var notesPanel = null;
+    var notesVisible = false;
+    var notesBtn = null;
+    var currentSlideIdx = 0;
 
     // Key CSS properties to copy from computed styles
     var STYLE_PROPS = [
@@ -177,6 +181,27 @@
             '.marp-outline-item.active { background: var(--vscode-list-activeSelectionBackground, rgba(4,57,94,0.6)); color: var(--vscode-list-activeSelectionForeground, #fff); }',
             '.marp-outline-num { opacity: 0.5; font-size: 11px; min-width: 16px; }',
             '.marp-outline-label { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }',
+            /* Speaker notes panel */
+            '#marp-notes-panel {',
+            '  position: fixed; bottom: 0; left: 0; right: 0; height: 150px;',
+            '  background: var(--vscode-panel-background, var(--vscode-sideBar-background, rgba(37,37,38,0.97)));',
+            '  border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.35));',
+            '  z-index: 10000; overflow-y: auto; padding: 8px 16px;',
+            '  box-sizing: border-box; scrollbar-width: thin;',
+            '  font-family: var(--vscode-font-family, system-ui, sans-serif);',
+            '  font-size: 13px; line-height: 1.5;',
+            '  color: var(--vscode-foreground, #ccc);',
+            '}',
+            '#marp-notes-panel.collapsed { display: none; }',
+            '#marp-notes-header {',
+            '  font-size: 11px; font-weight: bold; opacity: 0.5;',
+            '  margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;',
+            '}',
+            '#marp-notes-content { white-space: pre-wrap; }',
+            '#marp-notes-content:empty::after {',
+            '  content: "No speaker notes for this slide.";',
+            '  opacity: 0.4; font-style: italic;',
+            '}',
         ].join('\n');
         document.head.appendChild(styleEl);
     }
@@ -204,6 +229,7 @@
             if (sidebar) { sidebar.classList.remove('collapsed'); }
             toggle.style.display = 'none';
             document.body.style.marginLeft = getSidebarWidth() + 'px';
+            if (notesPanel) { notesPanel.style.left = getSidebarWidth() + 'px'; }
         });
         document.body.appendChild(toggle);
     }
@@ -247,6 +273,20 @@
             toolbar.appendChild(btn);
         });
 
+        // Speaker notes toggle button
+        notesBtn = document.createElement('button');
+        notesBtn.className = 'marp-toolbar-btn' + (notesVisible ? ' active' : '');
+        notesBtn.textContent = '\uD83D\uDDD2'; // 🗒
+        notesBtn.title = 'Speaker notes';
+        notesBtn.addEventListener('click', function () {
+            notesVisible = !notesVisible;
+            notesBtn.classList.toggle('active', notesVisible);
+            if (notesPanel) { notesPanel.classList.toggle('collapsed', !notesVisible); }
+            document.body.style.marginBottom = notesVisible ? '150px' : '0';
+            if (notesVisible) { updateNotesContent(); }
+        });
+        toolbar.appendChild(notesBtn);
+
         // Spacer pushes close button to the right
         var spacer = document.createElement('div');
         spacer.className = 'marp-toolbar-spacer';
@@ -262,6 +302,7 @@
             if (sidebar) { sidebar.classList.add('collapsed'); }
             if (toggle) { toggle.style.display = 'flex'; }
             document.body.style.marginLeft = '0';
+            if (notesPanel) { notesPanel.style.left = '0'; }
         });
         toolbar.appendChild(closeBtn);
 
@@ -306,6 +347,7 @@
         ensureToggle();
         var sb = createSidebar();
         ensureToolbar(sb);
+        ensureNotesPanel();
 
         var slideCount = slides.length;
         // Check if content count and mode match
@@ -316,6 +358,7 @@
         sb.dataset.slideCount = String(slideCount);
         sb.dataset.viewMode = viewMode;
         cachedSlides = slides;
+        loadNotesData();
         rebuildContent();
     }
 
@@ -456,6 +499,10 @@
                     items[bestIdx].classList.add('active');
                     smoothScrollTo(items[bestIdx], sidebar, 'nearest');
                 }
+                if (bestIdx !== currentSlideIdx) {
+                    currentSlideIdx = bestIdx;
+                    updateNotesContent();
+                }
             }
         }, { threshold: [0.3, 0.5, 0.7] });
         for (var i = 0; i < slides.length; i++) { scrollObserver.observe(slides[i]); }
@@ -479,9 +526,55 @@
                     thumbs[bestIdx].classList.add('active');
                     smoothScrollTo(thumbs[bestIdx], sidebar, 'nearest');
                 }
+                if (bestIdx !== currentSlideIdx) {
+                    currentSlideIdx = bestIdx;
+                    updateNotesContent();
+                }
             }
         }, { threshold: [0.3, 0.5, 0.7] });
         for (var i = 0; i < slides.length; i++) { scrollObserver.observe(slides[i]); }
+    }
+
+    function ensureNotesPanel() {
+        if (notesPanel && document.body.contains(notesPanel)) { return; }
+        notesPanel = document.createElement('div');
+        notesPanel.id = 'marp-notes-panel';
+        if (!notesVisible) { notesPanel.classList.add('collapsed'); }
+        var header = document.createElement('div');
+        header.id = 'marp-notes-header';
+        header.textContent = 'Speaker Notes';
+        var content = document.createElement('div');
+        content.id = 'marp-notes-content';
+        notesPanel.appendChild(header);
+        notesPanel.appendChild(content);
+        document.body.appendChild(notesPanel);
+        // Adjust left margin to match sidebar
+        if (isVisible) { notesPanel.style.left = getSidebarWidth() + 'px'; }
+        if (notesVisible) { document.body.style.marginBottom = '150px'; }
+    }
+
+    var slideNotesData = []; // Populated from extension's injected JSON
+
+    /** Load speaker notes from data attribute injected by extension */
+    function loadNotesData() {
+        var el = document.querySelector('[data-marp-slide-notes]');
+        if (!el) { return; }
+        try {
+            slideNotesData = JSON.parse(el.getAttribute('data-marp-slide-notes'));
+        } catch (e) {
+            slideNotesData = [];
+        }
+    }
+
+    function updateNotesContent() {
+        if (!notesPanel || !notesVisible) { return; }
+        // Load notes data if not yet loaded
+        if (slideNotesData.length === 0) { loadNotesData(); }
+        var content = notesPanel.querySelector('#marp-notes-content');
+        if (!content) { return; }
+        content.textContent = (slideNotesData[currentSlideIdx] || '');
+        // Update left position based on sidebar
+        notesPanel.style.left = isVisible ? getSidebarWidth() + 'px' : '0';
     }
 
     var lastToggleSeq = 0;

@@ -24,6 +24,75 @@ let lastMarkdownDocument: vscode.TextDocument | undefined;
 let thumbPanelVisible = false;
 let thumbToggleSeq = 0;
 
+/** Cached speaker notes per slide, injected via tikz fence output */
+let cachedSlideNotes: string[] = [];
+let notesInjected = false;
+
+/** Parse Marp speaker notes from markdown source.
+ *  Notes are HTML comments (<!-- ... -->) within each slide. */
+function parseSpeakerNotes(markdown: string): string[] {
+  const lines = markdown.split('\n');
+  const notes: string[] = [];
+  let currentNotes: string[] = [];
+  let inFrontmatter = false;
+  let frontmatterDone = false;
+  let inComment = false;
+  let commentLines: string[] = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+
+    // Skip frontmatter
+    if (i === 0 && line.trim() === '---') { inFrontmatter = true; continue; }
+    if (inFrontmatter && line.trim() === '---') { inFrontmatter = false; frontmatterDone = true; continue; }
+    if (inFrontmatter || !frontmatterDone) { continue; }
+
+    // Slide separator
+    if (line.trim() === '---') {
+      notes.push(currentNotes.join('\n').trim());
+      currentNotes = [];
+      continue;
+    }
+
+    // Multi-line comment handling
+    if (inComment) {
+      const endIdx = line.indexOf('-->');
+      if (endIdx >= 0) {
+        commentLines.push(line.substring(0, endIdx));
+        currentNotes.push(commentLines.join('\n').trim());
+        commentLines = [];
+        inComment = false;
+      } else {
+        commentLines.push(line);
+      }
+      continue;
+    }
+
+    // Single-line comment: <!-- ... -->
+    const singleMatch = line.match(/<!--\s*(.*?)\s*-->/);
+    if (singleMatch) {
+      // Skip directives like <!-- _class: title -->
+      const content = singleMatch[1];
+      if (content && !content.match(/^_?\w+\s*:/)) {
+        currentNotes.push(content);
+      }
+      continue;
+    }
+
+    // Start of multi-line comment: <!--
+    const startMatch = line.match(/<!--\s*(.*)/);
+    if (startMatch) {
+      inComment = true;
+      commentLines = [startMatch[1]];
+      continue;
+    }
+  }
+  // Last slide
+  notes.push(currentNotes.join('\n').trim());
+
+  return notes;
+}
+
 
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('TikZJax');
@@ -119,22 +188,29 @@ export function activate(context: vscode.ExtensionContext) {
     const result = previewManager?.getSvg(hash);
     outputChannel.appendLine(`[render] content length=${source.length} trimmed length=${source.trim().length} hash=${hash.slice(0, 8)}`);
 
-    // Piggyback toggle signal on tikz fence output (raw HTML, bypasses Marp's html sanitization)
-    const toggleSignal = thumbToggleSeq > 0
-      ? `<div data-marp-thumb-toggle="${thumbToggleSeq}" data-marp-thumb-visible="${thumbPanelVisible}" style="display:none"></div>`
-      : '';
+    // Piggyback signals on tikz fence output (raw HTML, bypasses Marp's html sanitization)
+    let signalHtml = '';
+    if (thumbToggleSeq > 0) {
+      signalHtml += `<div data-marp-thumb-toggle="${thumbToggleSeq}" data-marp-thumb-visible="${thumbPanelVisible}" style="display:none"></div>`;
+    }
+    // Inject speaker notes data once per render cycle
+    if (!notesInjected && cachedSlideNotes.length > 0) {
+      notesInjected = true;
+      const notesJson = JSON.stringify(cachedSlideNotes).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+      signalHtml += `<div data-marp-slide-notes='${notesJson.replace(/'/g, '&#39;')}' style="display:none"></div>`;
+    }
 
     if (result?.svg) {
       outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → cached SVG`);
-      return `<div class="tikz-diagram" style="text-align:center;margin:1em 0">${result.svg}</div>${toggleSignal}\n`;
+      return `<div class="tikz-diagram" style="text-align:center;margin:1em 0">${result.svg}</div>${signalHtml}\n`;
     } else if (result?.error) {
       outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → error: ${result.error.slice(0, 80)}`);
       const escaped = escapeHtml(result.error);
-      return `<div class="tikz-diagram tikz-error" style="text-align:center;margin:1em 0;color:#c00"><div class="tikz-error-title">⚠ Rendering Error</div><pre class="tikz-error-message" style="white-space:pre-wrap">${escaped}</pre></div>${toggleSignal}\n`;
+      return `<div class="tikz-diagram tikz-error" style="text-align:center;margin:1em 0;color:#c00"><div class="tikz-error-title">⚠ Rendering Error</div><pre class="tikz-error-message" style="white-space:pre-wrap">${escaped}</pre></div>${signalHtml}\n`;
     } else {
       outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → not cached, triggering background render`);
       scheduleBackgroundRender();
-      return `<div class="tikz-diagram tikz-loading" style="text-align:center;margin:1em 0"><span class="tikz-spinner"></span> Rendering TikZ diagram…</div>${toggleSignal}\n`;
+      return `<div class="tikz-diagram tikz-loading" style="text-align:center;margin:1em 0"><span class="tikz-spinner"></span> Rendering TikZ diagram…</div>${signalHtml}\n`;
     }
   }
 
@@ -206,9 +282,16 @@ export function activate(context: vscode.ExtensionContext) {
         };
       };
 
+      /** Reset per-render state and extract speaker notes from source */
+      const prepareRender = (src: string): void => {
+        notesInjected = false;
+        cachedSlideNotes = parseSpeakerNotes(src);
+      };
+
       // Wrap md.parse synchronously (handles case where we load after Marp)
       const origParse = md.parse.bind(md);
       md.parse = function (src: string, env?: any) {
+        prepareRender(src);
         const tokens = origParse(src, env);
         installFenceOnMarpInstance();
         return tokens;
@@ -220,6 +303,7 @@ export function activate(context: vscode.ExtensionContext) {
       setTimeout(() => {
         const currentParse = md.parse;
         md.parse = function (src: string, env?: any) {
+          prepareRender(src);
           outputChannel.appendLine(`[parse-wrapper] src.length=${src.length}`);
           const tokens = currentParse.call(md, src, env);
           installFenceOnMarpInstance();

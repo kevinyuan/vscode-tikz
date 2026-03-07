@@ -30,6 +30,7 @@ Render beautiful LaTeX and TikZ diagrams directly in your Markdown files. Create
 
 - **Live Preview**: See your TikZ diagrams rendered in real-time as you type
 - **Marp Compatibility**: TikZ diagrams render inside Marp slide decks (`marp: true`), export to **editable PPTX**
+- **Slide Navigator**: Thumbnail sidebar with three view modes (small/large thumbnails, outline), speaker notes panel, and click-to-navigate — all synced with the main slide view
 - **Rich Package Support**: Use chemfig, circuitikz, pgfplots, tikz-cd, and more
 - **Dark Mode**: Automatic color inversion for seamless dark theme integration
 - **Smart Caching**: Previously rendered diagrams load instantly
@@ -247,10 +248,12 @@ Access these commands via the Command Palette (`Ctrl+Shift+P` / `Cmd+Shift+P`):
 
 | Command | Description |
 |---------|-------------|
-| **TikZJax: Open TikZ Preview** | Open the preview panel to see rendered diagrams |
-| **TikZJax: Refresh TikZ Diagrams** | Re-render all diagrams in the current document |
-| **TikZJax: Clear TikZ Cache** | Clear cached diagrams and force fresh rendering |
-| **TikZJax: Reset TikZJax Engine** | Reset the rendering engine (useful after errors) |
+| **TikZ: Open TikZ Preview** | Open the preview panel to see rendered diagrams |
+| **TikZ: Refresh TikZ Diagrams** | Re-render all diagrams in the current document |
+| **TikZ: Clear TikZ Cache** | Clear cached diagrams and force fresh rendering |
+| **TikZ: Reset TikZJax Engine** | Reset the rendering engine (useful after errors) |
+| **TikZ: Toggle Slide Thumbnails** | Show/hide the slide thumbnail sidebar in Marp preview |
+| **TikZ: Export Marp Slides to PPTX** | Export the current Marp deck to editable PPTX |
 
 All commands are available when editing Markdown files.
 
@@ -313,6 +316,16 @@ Default position for the preview panel:
   "tikzjax.previewPosition": "side"
 }
 ```
+
+## Marp Slide Navigator
+
+When previewing a Marp slide deck, a slide navigator appears in the preview pane:
+
+- **Thumbnail sidebar**: Click the hamburger button (top-left) to open. Thumbnails stay synced with your scroll position.
+- **Three view modes**: Switch between small thumbnails, large thumbnails, and outline view using the toolbar icons.
+- **Speaker notes**: Toggle the notes panel from the toolbar to see speaker notes for the current slide. Notes are extracted from HTML comments in your Markdown (`<!-- Your notes here -->`).
+- **Click to navigate**: Click any thumbnail or outline item to smoothly scroll to that slide.
+- **Command palette**: Use `TikZ: Toggle Slide Thumbnails` to toggle the sidebar.
 
 ## Export Marp Slides to Editable PPTX
 

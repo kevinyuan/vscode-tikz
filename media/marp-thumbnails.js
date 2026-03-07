@@ -12,7 +12,6 @@
     var toolbar = null;
     var isVisible = false;
     var viewMode = 'small'; // 'small' | 'big' | 'outline'
-    var scrollObserver = null;
     var styleEl = null;
     var notesPanel = null;
     var notesVisible = false;
@@ -48,11 +47,16 @@
         if (block === 'center') {
             targetY = relTop - (viewH - elRect.height) / 2;
         } else if (block === 'nearest') {
-            var visTop = startY;
+            // Account for sticky toolbar at the top of sidebar
+            var topOffset = 0;
+            if (container && toolbar && container.contains(toolbar)) {
+                topOffset = toolbar.offsetHeight + 6; // toolbar height + margin
+            }
+            var visTop = startY + topOffset;
             var visBottom = startY + viewH;
             if (relTop >= visTop && relBottom <= visBottom) { return; }
             if (relTop < visTop) {
-                targetY = relTop;
+                targetY = relTop - topOffset;
             } else {
                 targetY = relBottom - viewH;
             }
@@ -283,7 +287,11 @@
             notesBtn.classList.toggle('active', notesVisible);
             if (notesPanel) { notesPanel.classList.toggle('collapsed', !notesVisible); }
             document.body.style.marginBottom = notesVisible ? '150px' : '0';
-            if (notesVisible) { updateNotesContent(); }
+            if (notesVisible) {
+                updateNotesContent();
+                // Re-detect with new viewport size (notes panel changes visible area)
+                detectAndHighlight();
+            }
         });
         toolbar.appendChild(notesBtn);
 
@@ -318,7 +326,6 @@
         for (var i = children.length - 1; i >= 0; i--) {
             if (children[i] !== toolbar) { sidebar.removeChild(children[i]); }
         }
-        if (scrollObserver) { scrollObserver.disconnect(); scrollObserver = null; }
 
         if (viewMode === 'outline') {
             buildOutline(cachedSlides, sidebar);
@@ -421,19 +428,21 @@
             thumb.appendChild(numBadge);
             thumb.appendChild(viewport);
 
-            thumb.addEventListener('click', (function (targetSlide, targetThumb) {
+            thumb.addEventListener('click', (function (targetSlide, targetThumb, idx) {
                 return function () {
                     smoothScrollTo(targetSlide, null, 'center');
                     var all = sb.querySelectorAll('.marp-thumb');
                     for (var j = 0; j < all.length; j++) { all[j].classList.remove('active'); }
                     targetThumb.classList.add('active');
+                    currentSlideIdx = idx;
+                    updateNotesContent();
                 };
-            })(slide, thumb));
+            })(slide, thumb, i));
 
             sb.appendChild(thumb);
         });
 
-        setupScrollTracking(slides, sb);
+        setupScrollTracking();
     }
 
     function buildOutline(slides, sb) {
@@ -466,73 +475,69 @@
             item.appendChild(num);
             item.appendChild(label);
 
-            item.addEventListener('click', (function (targetSlide, targetItem) {
+            item.addEventListener('click', (function (targetSlide, targetItem, idx) {
                 return function () {
                     smoothScrollTo(targetSlide, null, 'center');
                     var all = sb.querySelectorAll('.marp-outline-item');
                     for (var j = 0; j < all.length; j++) { all[j].classList.remove('active'); }
                     targetItem.classList.add('active');
+                    currentSlideIdx = idx;
+                    updateNotesContent();
                 };
-            })(slide, item));
+            })(slide, item, i));
 
             sb.appendChild(item);
         });
 
-        setupOutlineScrollTracking(slides, sb);
+        setupScrollTracking();
     }
 
-    function setupOutlineScrollTracking(slides, sb) {
-        if (!window.IntersectionObserver) { return; }
-        scrollObserver = new IntersectionObserver(function (entries) {
-            var bestIdx = -1, bestRatio = 0;
-            for (var i = 0; i < entries.length; i++) {
-                if (entries[i].isIntersecting && entries[i].intersectionRatio > bestRatio) {
-                    bestRatio = entries[i].intersectionRatio;
-                    var idx = Array.prototype.indexOf.call(slides, entries[i].target);
-                    if (idx >= 0) { bestIdx = idx; }
-                }
+    var trackingScrollListener = null;
+    var trackingDebounceTimer = null;
+
+    /** Detect current slide by visible area, update thumbnail/outline active + notes. */
+    function detectAndHighlight() {
+        if (!cachedSlides || cachedSlides.length === 0) { return; }
+        var viewH = window.innerHeight;
+        var notesH = notesVisible ? 150 : 0;
+        var visibleH = viewH - notesH;
+        var bestIdx = currentSlideIdx;
+        var bestOverlap = 0;
+        for (var i = 0; i < cachedSlides.length; i++) {
+            var rect = cachedSlides[i].getBoundingClientRect();
+            var top = Math.max(rect.top, 0);
+            var bottom = Math.min(rect.bottom, visibleH);
+            var overlap = Math.max(0, bottom - top);
+            if (overlap > bestOverlap) {
+                bestOverlap = overlap;
+                bestIdx = i;
             }
-            if (bestIdx >= 0) {
-                var items = sb.querySelectorAll('.marp-outline-item');
-                for (var j = 0; j < items.length; j++) { items[j].classList.remove('active'); }
-                if (items[bestIdx]) {
-                    items[bestIdx].classList.add('active');
-                    smoothScrollTo(items[bestIdx], sidebar, 'nearest');
-                }
-                if (bestIdx !== currentSlideIdx) {
-                    currentSlideIdx = bestIdx;
-                    updateNotesContent();
-                }
+        }
+        if (bestIdx !== currentSlideIdx) {
+            currentSlideIdx = bestIdx;
+            // Update sidebar highlight
+            var selector = viewMode === 'outline' ? '.marp-outline-item' : '.marp-thumb';
+            var items = sidebar ? sidebar.querySelectorAll(selector) : [];
+            for (var j = 0; j < items.length; j++) { items[j].classList.remove('active'); }
+            if (items[bestIdx]) {
+                items[bestIdx].classList.add('active');
+                smoothScrollTo(items[bestIdx], sidebar, 'nearest');
             }
-        }, { threshold: [0.3, 0.5, 0.7] });
-        for (var i = 0; i < slides.length; i++) { scrollObserver.observe(slides[i]); }
+            updateNotesContent();
+        }
     }
 
-    function setupScrollTracking(slides, sb) {
-        if (!window.IntersectionObserver) { return; }
-        scrollObserver = new IntersectionObserver(function (entries) {
-            var bestIdx = -1, bestRatio = 0;
-            for (var i = 0; i < entries.length; i++) {
-                if (entries[i].isIntersecting && entries[i].intersectionRatio > bestRatio) {
-                    bestRatio = entries[i].intersectionRatio;
-                    var idx = Array.prototype.indexOf.call(slides, entries[i].target);
-                    if (idx >= 0) { bestIdx = idx; }
-                }
-            }
-            if (bestIdx >= 0) {
-                var thumbs = sb.querySelectorAll('.marp-thumb');
-                for (var j = 0; j < thumbs.length; j++) { thumbs[j].classList.remove('active'); }
-                if (thumbs[bestIdx]) {
-                    thumbs[bestIdx].classList.add('active');
-                    smoothScrollTo(thumbs[bestIdx], sidebar, 'nearest');
-                }
-                if (bestIdx !== currentSlideIdx) {
-                    currentSlideIdx = bestIdx;
-                    updateNotesContent();
-                }
-            }
-        }, { threshold: [0.3, 0.5, 0.7] });
-        for (var i = 0; i < slides.length; i++) { scrollObserver.observe(slides[i]); }
+    function onTrackingScroll() {
+        clearTimeout(trackingDebounceTimer);
+        trackingDebounceTimer = setTimeout(detectAndHighlight, 150);
+    }
+
+    function setupScrollTracking() {
+        if (trackingScrollListener) { return; }
+        trackingScrollListener = onTrackingScroll;
+        window.addEventListener('scroll', trackingScrollListener, { passive: true });
+        // Initial detection
+        setTimeout(detectAndHighlight, 100);
     }
 
     function ensureNotesPanel() {
@@ -550,7 +555,9 @@
         document.body.appendChild(notesPanel);
         // Adjust left margin to match sidebar
         if (isVisible) { notesPanel.style.left = getSidebarWidth() + 'px'; }
-        if (notesVisible) { document.body.style.marginBottom = '150px'; }
+        if (notesVisible) {
+            document.body.style.marginBottom = '150px';
+        }
     }
 
     var slideNotesData = []; // Populated from extension's injected JSON
@@ -570,7 +577,9 @@
         if (!notesPanel || !notesVisible) { return; }
         // Load notes data if not yet loaded
         if (slideNotesData.length === 0) { loadNotesData(); }
+        var header = notesPanel.querySelector('#marp-notes-header');
         var content = notesPanel.querySelector('#marp-notes-content');
+        if (header) { header.textContent = 'Speaker Notes \u2014 Slide ' + (currentSlideIdx + 1); }
         if (!content) { return; }
         content.textContent = (slideNotesData[currentSlideIdx] || '');
         // Update left position based on sidebar

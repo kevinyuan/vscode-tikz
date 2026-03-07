@@ -2,7 +2,7 @@
   "name": "vscode-tikzjax",
   "displayName": "TikZ in Markdown",
   "description": "Render LaTeX and TikZ diagrams in Markdown/Marp live preview",
-  "version": "0.3.5",
+  "version": "0.4.0",
   "publisher": "kevinyuan",
   "icon": "icon.png",
   "author": {

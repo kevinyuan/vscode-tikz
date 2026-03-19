@@ -1,0 +1,63 @@
+<svg viewBox="0 0 256 256" width="256" height="256" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- 背景渐变 -->
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1e293b;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#020617;stop-opacity:1" />
+    </linearGradient>
+
+    <!-- 淡出蒙版：在圆圈外缘小范围淡出 -->
+    <mask id="fadeMask">
+      <rect width="256" height="256" fill="white" />
+      <!-- r=56 是圆圈边缘，r=82 是淡出结束（外侧26px过渡带） -->
+      <radialGradient id="maskGrad" cx="180" cy="72" r="82" gradientUnits="userSpaceOnUse">
+        <stop offset="0%"   stop-color="black" />
+        <stop offset="68%"  stop-color="black" />
+        <stop offset="100%" stop-color="white" />
+      </radialGradient>
+      <circle cx="180" cy="72" r="82" fill="url(#maskGrad)" />
+    </mask>
+    
+    <!-- 线条发光 -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="1.5" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- 背景底色 -->
+  <rect width="256" height="256" rx="56" fill="url(#bgGrad)" />
+  
+  <!-- 网格 -->
+  <path d="M 40 40 H 216 M 40 84 H 216 M 40 128 H 216 M 40 172 H 216 M 40 216 H 216 M 40 40 V 216 M 84 40 V 216 M 128 40 V 216 M 172 40 V 216 M 216 40 V 216" 
+        stroke="#334155" stroke-width="1" opacity="0.3" fill="none" />
+
+  <!-- 坐标轴 -->
+  <path d="M 40 216 V 40 M 40 216 H 216" fill="none" stroke="#94a3b8" stroke-width="5" stroke-linecap="round" />
+  
+  <!-- 应用了淡出蒙版的底层图层 -->
+  <g mask="url(#fadeMask)">
+    <!-- IV 曲线 -->
+    <g filter="url(#glow)">
+      <path d="M 40 216 Q 70 190, 110 180 T 216 170" fill="none" stroke="#0ea5e9" stroke-width="3" stroke-linecap="round" opacity="0.6" />
+      <path d="M 40 216 Q 60 150, 100 130 T 216 110" fill="none" stroke="#38bdf8" stroke-width="3" stroke-linecap="round" opacity="0.8" />
+      <path d="M 40 216 Q 50 110, 90 80 T 216 50" fill="none" stroke="#7dd3fc" stroke-width="3" stroke-linecap="round" />
+    </g>
+    <!-- 特性辅助虚线 -->
+    <path d="M 40 216 Q 90 170, 110 40" fill="none" stroke="#94a3b8" stroke-width="3" stroke-dasharray="8 6" stroke-linecap="round" opacity="0.75" />
+  </g>
+
+  <!-- 顶部悬浮圆盘层 -->
+  <g>
+    <!-- 圆盘主体 -->
+    <circle cx="180" cy="72" r="56" fill="#0f172a" stroke="#38bdf8" stroke-width="4.5" />
+    
+    <!-- 内部符号 -->
+    <g transform="translate(173, 72) scale(1.3) translate(-39, -40)" stroke-linecap="butt" stroke-linejoin="miter">
+      <path d="M 16 40 H 34 M 34 18 V 62" fill="none" stroke="#7dd3fc" stroke-width="3.5" />
+      <path d="M 44 26 H 58 V 10" fill="none" stroke="#7dd3fc" stroke-width="3.5" />
+      <path d="M 44 54 H 58 V 70" fill="none" stroke="#7dd3fc" stroke-width="3.5" />
+      <path d="M 44 15 V 65" fill="none" stroke="#7dd3fc" stroke-width="3.5" />
+    </g>
+  </g>
+</svg>

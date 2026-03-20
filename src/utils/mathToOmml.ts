@@ -130,16 +130,41 @@ function convertMrow(el: Element): string {
             : tag === 'mrow' && isNarySingletonMrow(child) ? childElements(child)[0]!
             : null;
         if (naryEl) {
-            const naryTag = localName(naryEl);
-            const naryKids = childElements(naryEl);
-            const chr  = textContent(naryKids[0]!);
-            const sub  = (naryTag === 'munderover' || naryTag === 'msubsup') ? (naryKids[1] ?? null) : null;
-            const sup  = (naryTag === 'munderover' || naryTag === 'msubsup') ? (naryKids[2] ?? null) : null;
-            // Next sibling element becomes the body of the n-ary operator
-            const bodyEl = kids[i + 1];
+            // Collect all consecutive nary siblings (e.g. ∑∑ F) into a chain so
+            // every inner nary has a real body instead of an empty <m:e/> (dashed box).
+            type NaryItem = { chr: string; sub: Element | null; sup: Element | null };
+            const toItem = (el: Element): NaryItem => {
+                const cn = childElements(el);
+                const t  = localName(el);
+                return {
+                    chr: textContent(cn[0]!),
+                    sub: (t === 'munderover' || t === 'msubsup') ? (cn[1] ?? null) : null,
+                    sup: (t === 'munderover' || t === 'msubsup') ? (cn[2] ?? null) : null,
+                };
+            };
+            const chain: NaryItem[] = [toItem(naryEl)];
+            let j = i + 1;
+            while (j < kids.length) {
+                const nk   = kids[j];
+                const nTag = localName(nk);
+                const next: Element | null =
+                    (nTag === 'msubsup' || nTag === 'munderover') && isNaryElement(nk) ? nk
+                    : nTag === 'mrow' && isNarySingletonMrow(nk) ? childElements(nk)[0]!
+                    : null;
+                if (!next) { break; }
+                chain.push(toItem(next));
+                j++;
+            }
+            // kids[j] is the body element of the innermost nary (may be undefined)
+            const bodyEl  = kids[j];
             const bodyStr = bodyEl ? convertNode(bodyEl) : '';
-            out += makeNary(chr, sub, sup, bodyStr);
-            if (bodyEl) { i++; }
+            // Build nested nary structure right-to-left
+            let nested = makeNary(chain[chain.length - 1].chr, chain[chain.length - 1].sub, chain[chain.length - 1].sup, bodyStr);
+            for (let k = chain.length - 2; k >= 0; k--) {
+                nested = makeNary(chain[k].chr, chain[k].sub, chain[k].sup, nested);
+            }
+            out += nested;
+            i = bodyEl ? j : j - 1;  // outer i++ will land on element after bodyEl
         } else {
             out += convertNode(child);
         }
@@ -292,7 +317,7 @@ function makeMtable(el: Element): string {
             if (cells.length === 3) {
                 const formula = convertChildren(cells[1]);
                 const tag    = convertChildren(cells[2]);
-                return formula + tag;
+                return formula + makeRun('\u2003\u2003', 'p') + tag;
             }
         }
     }

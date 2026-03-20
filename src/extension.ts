@@ -1016,8 +1016,14 @@ function processSlideXml(xml: string, formulaMap: Map<string, ExtractedMath>, sl
 
   if (result === xml) { return xml; }
 
-  // Second pass: detect and resolve vertical overlap for display math shapes
+  // Second pass: detect and resolve vertical overlap for display math shapes.
+  // Must run before centering so we know the true post-expansion content height.
   result = fixDisplayMathLayout(result, slideCx, slideCy);
+
+  // Third pass: vertically center the content cluster in the available zone.
+  // Because content height varies per slide (more formulas → taller cluster),
+  // margins are computed automatically rather than hardcoded.
+  result = centerContentVertically(result, slideCy);
 
   return ensureSlideNamespaces(result);
 }
@@ -1067,15 +1073,12 @@ function isDisplayMathOnlyShape(spXml: string, formulaMap: Map<string, Extracted
 }
 
 /** Widens a shape to slide width (x=0) for display math centering.
- *  Also sets a minimum height (~126px) since spAutoFit doesn't auto-size OMML content. */
+ *  Only adjusts horizontal geometry; cy (height) is left exactly as LibreOffice set it
+ *  so we never artificially resize formula shapes. */
 function widenShape(spXml: string, slideCx: number): string {
-  const MIN_DISPLAY_MATH_CY = 1200000; // ~126px at 9525 EMU/px
   let result = spXml;
   result = result.replace(/(<a:off\b[^>]*\bx=")[^"]*"/, '$10"');
   result = result.replace(/(<a:ext\b[^>]*\bcx=")[^"]*"/, `$1${slideCx}"`);
-  result = result.replace(/<a:ext\b[^>]*\bcy="(\d+)"[^>]*\/>/,
-    (m, curCy) => m.replace(/\bcy="\d+"/, `cy="${Math.max(parseInt(curCy, 10), MIN_DISPLAY_MATH_CY)}"`)
-  );
   return result;
 }
 
@@ -1103,58 +1106,152 @@ function removeEmptyParasAdjacentToOmml(spXml: string): string {
 }
 
 /**
- * After OMML injection, detects shapes containing math that may overflow into
- * content below, and shifts those lower shapes down to avoid overlap.
- * Estimates formula height from font size and OMML structural complexity.
- * Handles all OMML-containing shapes regardless of width or alignment.
+ * Vertically centers the content cluster in the zone between the slide header and
+ * footer. Margins are computed automatically from actual content height, so slides
+ * with more content get smaller margins and slides with less content get larger ones.
+ *
+ * Runs AFTER fixDisplayMathLayout so formula shapes already have their expanded cy,
+ * giving an accurate content span to center against.
+ *
+ * Footer detection: Marp footer shapes are thin decorative bars (cy < 200 000 EMU)
+ * located in the bottom 10 % of the slide — distinguished from content shapes that
+ * fixDisplayMathLayout may have pushed into the same region.
+ *
+ * Only shifts content UP (removes the LibreOffice-added blank gap). Never shifts
+ * down — if content is already at or below center the slide layout is left alone.
  */
-function fixDisplayMathLayout(xml: string, _slideCx: number, slideCy: number): string {
-  // Collect all shapes that contain OMML math (any cx, any alignment)
-  type ShapeInfo = { y: number; cy: number; cx: number; estimatedCy: number };
+function centerContentVertically(xml: string, slideCy: number): string {
+  const HEADER_ZONE    = Math.round(slideCy * 0.15);  // y < this → header shape
+  const FOOTER_Y_MIN   = Math.round(slideCy * 0.90);  // y > this AND small cy → footer
+  const FOOTER_CY_MAX  = 200000;                       // thin bar ≈ footer decoration
+
+  // Scan <p:sp> shapes to classify each as header, footer, or content.
+  const spRe = /<p:sp>([\s\S]*?)<\/p:sp>/g;
+  let spM: RegExpExecArray | null;
+  let headerBottom   = 0;
+  let firstContentY  = Infinity;
+  let lastContentBot = 0;
+
+  while ((spM = spRe.exec(xml)) !== null) {
+    const inner = spM[1];
+    const yM  = /<a:off\b[^>]*\by="(\d+)"/.exec(inner);
+    const cyM = /<a:ext\b[^>]*\bcy="(\d+)"/.exec(inner);
+    if (!yM || !cyM) { continue; }
+    const y  = parseInt(yM[1], 10);
+    const cy = parseInt(cyM[1], 10);
+
+    if (y < HEADER_ZONE) {
+      headerBottom = Math.max(headerBottom, y + cy);
+    } else if (y >= FOOTER_Y_MIN && cy < FOOTER_CY_MAX) {
+      // Thin bar near slide bottom — Marp footer decoration, skip
+    } else {
+      firstContentY  = Math.min(firstContentY, y);
+      lastContentBot = Math.max(lastContentBot, y + cy);
+    }
+  }
+
+  if (firstContentY === Infinity || headerBottom === 0) { return xml; }
+
+  const contentSpan   = lastContentBot - firstContentY;
+  const footerTop     = Math.round(slideCy * 0.93); // conservative footer boundary
+  const availableZone = footerTop - headerBottom;
+
+  if (contentSpan >= availableZone) { return xml; }  // content already fills zone
+
+  // Target: equal margins above and below the content cluster
+  const margin      = Math.round((availableZone - contentSpan) / 2);
+  const targetFirst = headerBottom + margin;
+  const upShift     = firstContentY - targetFirst;
+
+  if (upShift <= 0) { return xml; }   // already at or below center — leave it
+  if (upShift < 100000) { return xml; } // negligible shift
+
+  // Apply shift only to content shapes (skip header and footer shapes by y+cy criteria)
+  return xml.replace(/<p:sp>([\s\S]*?)<\/p:sp>/g, (spXml: string, inner: string) => {
+    const yM  = /<a:off\b[^>]*\by="(\d+)"/.exec(inner);
+    const cyM = /<a:ext\b[^>]*\bcy="(\d+)"/.exec(inner);
+    if (!yM || !cyM) { return spXml; }
+    const y  = parseInt(yM[1], 10);
+    const cy = parseInt(cyM[1], 10);
+    if (y < HEADER_ZONE) { return spXml; }                          // header
+    if (y >= FOOTER_Y_MIN && cy < FOOTER_CY_MAX) { return spXml; } // footer
+    return spXml.replace(/(<a:off\b[^>]*\by=")(\d+)("[^>]*\/>)/g,
+      (_m, pre, yStr, post) => `${pre}${parseInt(yStr, 10) - upShift}${post}`
+    );
+  });
+}
+
+/**
+ * After OMML injection, detects display-math shapes (full slide width) that may
+ * overflow into content below, and shifts those lower shapes down to avoid overlap.
+ * Estimates formula height from font size and OMML structural complexity.
+ */
+function fixDisplayMathLayout(xml: string, slideCx: number, slideCy: number): string {
+  // Detect body font size once — used to normalize display math sz to match Marp rendering.
+  // LibreOffice sets sz=2000 (20pt) on display math shapes but Marp renders at body sz (~16.5pt),
+  // causing formulas to appear 1.2x too large in PPTX. Normalizing fixes both size and bounding box.
+  const bodySz = findBodyFontSize(xml);
+
+  type ShapeInfo = { y: number; estimatedCy: number };
   const mathShapes: ShapeInfo[] = [];
+  const shapeReplacements: Array<{ original: string; replacement: string }> = [];
 
   const spRe = /<p:sp>([\s\S]*?)<\/p:sp>/g;
   let spM: RegExpExecArray | null;
   while ((spM = spRe.exec(xml)) !== null) {
+    const spXml = spM[0];
     const inner = spM[1];
     if (!inner.includes('a14:m')) { continue; }
 
     const yM  = /<a:off\b[^>]*\by="(\d+)"/.exec(inner);
-    const cyM = /<a:ext\b[^>]*\bcy="(\d+)"/.exec(inner);
     const cxM = /<a:ext\b[^>]*\bcx="(\d+)"/.exec(inner);
-    if (!yM || !cyM || !cxM) { continue; }
+    if (!yM || !cxM) { continue; }
 
-    const szM = /\bsz="(\d+)"/.exec(inner);
-    const szHundredthsPt = szM ? parseInt(szM[1], 10) : 2000;
+    // Skip inline math shapes (not full-width) — only display math has cx === slideCx
+    if (parseInt(cxM[1], 10) !== slideCx) { continue; }
+
     const ommlM = /<m:oMath>[\s\S]*?<\/m:oMath>/.exec(inner);
+    const estimatedCy = estimateOmmlHeightEmu(ommlM ? ommlM[0] : '', bodySz);
 
-    mathShapes.push({
-      y:           parseInt(yM[1],  10),
-      cy:          parseInt(cyM[1], 10),
-      cx:          parseInt(cxM[1], 10),
-      estimatedCy: estimateOmmlHeightEmu(ommlM ? ommlM[0] : '', szHundredthsPt),
-    });
+    mathShapes.push({ y: parseInt(yM[1], 10), estimatedCy });
+
+    // Normalize sz to body size and set cy to estimated height so the bounding box
+    // matches the visual formula size (fixes "selection box too small" issue).
+    let modified = normalizeShapeSz(spXml, bodySz);
+    modified = setShapeCy(modified, estimatedCy);
+    shapeReplacements.push({ original: spXml, replacement: modified });
   }
   if (mathShapes.length === 0) { return xml; }
 
+  // Apply shape modifications (sz normalization + cy correction)
+  let result = xml;
+  for (const { original, replacement } of shapeReplacements) {
+    const idx = result.indexOf(original);
+    if (idx !== -1) {
+      result = result.slice(0, idx) + replacement + result.slice(idx + original.length);
+    }
+  }
+
   mathShapes.sort((a, b) => a.y - b.y);
 
-  let result = xml;
-  for (let idx = 0; idx < mathShapes.length; idx++) {
-    const { y: shapeY, cy: currentCy, cx: shapeCx, estimatedCy } = mathShapes[idx];
+  // Footer shapes start at ~95% of slide height (Marp standard template: y≈6501600 in 6858000px).
+  // Use 93% as the threshold — safely below the footer, leaving room for any Marp theme variant.
+  // Shapes at y >= footerY are excluded from shifting and from the available-space calculation.
+  const footerY = Math.round(slideCy * 0.93);
 
-    // Find the nearest shape whose top is strictly below the formula shape's top
-    const nextY        = findNearestYBelow(result, shapeY);
-    const available    = nextY - shapeY;
-    const overflow     = estimatedCy - available;
+  for (let idx = 0; idx < mathShapes.length; idx++) {
+    const { y: shapeY, estimatedCy } = mathShapes[idx];
+
+    const nextY     = findNearestYBelow(result, shapeY);
+    const available = nextY - shapeY;
+    const overflow  = estimatedCy - available;
 
     if (overflow > 0) {
-      const lowestBottom = findLowestShapeBottom(result);
-      const maxShift     = Math.max(0, slideCy - lowestBottom - 50000); // 50 kEMU ≈ 5px margin
+      const lowestBottom = findLowestShapeBottom(result, shapeY, footerY);
+      const maxShift     = Math.max(0, slideCy - lowestBottom - 50000);
       const actualShift  = Math.min(overflow, maxShift);
       if (actualShift > 0) {
-        result = shiftShapesBelow(result, shapeY, actualShift);
-        // Propagate the shift to subsequent math shapes so their y values remain accurate
+        result = shiftShapesBelow(result, shapeY, actualShift, footerY);
         for (let j = idx + 1; j < mathShapes.length; j++) {
           if (mathShapes[j].y > shapeY) {
             mathShapes[j] = { ...mathShapes[j], y: mathShapes[j].y + actualShift };
@@ -1162,9 +1259,6 @@ function fixDisplayMathLayout(xml: string, _slideCx: number, slideCy: number): s
         }
       }
     }
-
-    // Update the formula shape's cy to the estimated formula height (may shrink from widenShape minimum)
-    result = setShapeCy(result, shapeY, currentCy, shapeCx, estimatedCy);
   }
   return result;
 }
@@ -1179,13 +1273,49 @@ function estimateOmmlHeightEmu(omml: string, szHundredthsPt: number): number {
   const hasSubSup    = /subSup/.test(omml);
   const hasRadical   = /<m:rad\b/.test(omml);
   let factor = 1.0;
-  if (hasFraction && undOvrCount > 1) { factor = 6.0; }   // fraction inside nested sums
+  if (hasFraction && undOvrCount > 1) { factor = 4.5; }   // fraction inside nested sums
   else if (hasFraction && undOvrCount > 0) { factor = 4.5; }
   else if (undOvrCount > 1) { factor = 4.5; }             // nested sums (∑∑): much taller
   else if (undOvrCount === 1) { factor = 3.0; }           // single ∑
   else if (hasFraction) { factor = 3.0; }
   else if (hasSubSup || hasRadical) { factor = 2.2; }
   return Math.round(base * factor);
+}
+
+/** Scans all non-math shapes and returns the most frequently used text font size (hundredths-pt). */
+function findBodyFontSize(xml: string): number {
+  const szCounts = new Map<number, number>();
+  const spRe = /<p:sp>([\s\S]*?)<\/p:sp>/g;
+  let spM: RegExpExecArray | null;
+  while ((spM = spRe.exec(xml)) !== null) {
+    const inner = spM[1];
+    if (inner.includes('a14:m')) { continue; }  // skip math shapes
+    const szRe = /\bsz="(\d+)"/g;
+    let szM: RegExpExecArray | null;
+    while ((szM = szRe.exec(inner)) !== null) {
+      const sz = parseInt(szM[1], 10);
+      if (sz >= 800 && sz <= 4400) {
+        szCounts.set(sz, (szCounts.get(sz) || 0) + 1);
+      }
+    }
+  }
+  if (szCounts.size === 0) { return 1800; }
+  let bestSz = 1800;
+  let bestCount = 0;
+  for (const [sz, count] of szCounts) {
+    if (count > bestCount) { bestCount = count; bestSz = sz; }
+  }
+  return bestSz;
+}
+
+/** Sets the cy attribute on the <a:ext> element inside a <p:sp> shape. */
+function setShapeCy(spXml: string, cy: number): string {
+  return spXml.replace(/(<a:ext\b[^>]*\bcy=")[^"]*"/, `$1${cy}"`);
+}
+
+/** Replaces all sz="N" font-size attributes inside a shape with the given value. */
+function normalizeShapeSz(spXml: string, sz: number): string {
+  return spXml.replace(/\bsz="\d+"/g, `sz="${sz}"`);
 }
 
 /** Returns the smallest y > thresholdY among all <a:off y="..."/> in the slide XML. */
@@ -1200,13 +1330,16 @@ function findNearestYBelow(xml: string, thresholdY: number): number {
   return nearest === Infinity ? thresholdY + 10_000_000 : nearest;
 }
 
-/** Returns the maximum (y + cy) across all shapes in the slide. */
-function findLowestShapeBottom(xml: string): number {
+/** Returns the maximum (y + cy) for shapes whose y is in [minShapeY, maxShapeY). */
+function findLowestShapeBottom(xml: string, minShapeY: number = 0, maxShapeY: number = Infinity): number {
   const re = /<a:off\b[^>]*\by="(\d+)"[^>]*\/>\s*<a:ext\b[^>]*\bcy="(\d+)"/g;
   let m: RegExpExecArray | null;
   let lowest = 0;
   while ((m = re.exec(xml)) !== null) {
-    lowest = Math.max(lowest, parseInt(m[1], 10) + parseInt(m[2], 10));
+    const y = parseInt(m[1], 10);
+    if (y > minShapeY && y < maxShapeY) {
+      lowest = Math.max(lowest, y + parseInt(m[2], 10));
+    }
   }
   return lowest;
 }
@@ -1219,20 +1352,6 @@ function shiftShapesBelow(xml: string, thresholdY: number, shiftEmu: number, max
   });
 }
 
-/** Sets the cy of the math shape uniquely identified by (y, originalCy, cx). */
-function setShapeCy(xml: string, shapeY: number, originalCy: number, shapeCx: number, newCy: number): string {
-  if (newCy === originalCy) { return xml; }
-  return xml.replace(/<p:sp>([\s\S]*?)<\/p:sp>/g, (spXml, inner) => {
-    const yM  = /<a:off\b[^>]*\by="(\d+)"/.exec(inner);
-    const cyM = /<a:ext\b[^>]*\bcy="(\d+)"/.exec(inner);
-    const cxM = /<a:ext\b[^>]*\bcx="(\d+)"/.exec(inner);
-    if (!yM || !cyM || !cxM) { return spXml; }
-    if (parseInt(yM[1], 10)  !== shapeY)    { return spXml; }
-    if (parseInt(cyM[1], 10) !== originalCy) { return spXml; }
-    if (parseInt(cxM[1], 10) !== shapeCx)   { return spXml; }
-    return spXml.replace(/(<a:ext\b[^>]*)\bcy="\d+"/, `$1cy="${newCy}"`);
-  });
-}
 
 // ─── Paragraph processing ─────────────────────────────────────────────────────
 

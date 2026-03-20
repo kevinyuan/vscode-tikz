@@ -1173,14 +1173,18 @@ function fixDisplayMathLayout(xml: string, _slideCx: number, slideCy: number): s
 function estimateOmmlHeightEmu(omml: string, szHundredthsPt: number): number {
   // Base single-line height: font size × 1.3 (includes typical ascenders/descenders)
   const base = (szHundredthsPt / 100) * 12700 * 1.3;
-  const hasFraction = /<m:f\b/.test(omml);
-  const hasUndOvr   = /undOvr/.test(omml);          // ∑/∏ with limits above/below
-  const hasSubSup   = /subSup/.test(omml);           // ∫ with sub/superscript limits
-  const hasRadical  = /<m:rad\b/.test(omml);
+  const hasFraction  = /<m:f\b/.test(omml);
+  // Count nesting depth: each undOvr nary (∑/∏) nests one level taller
+  const undOvrCount  = (omml.match(/undOvr/g) || []).length;
+  const hasSubSup    = /subSup/.test(omml);
+  const hasRadical   = /<m:rad\b/.test(omml);
   let factor = 1.0;
-  if      (hasFraction && hasUndOvr) { factor = 4.0; }
-  else if (hasFraction || hasUndOvr) { factor = 3.0; }
-  else if (hasSubSup  || hasRadical) { factor = 2.2; }
+  if (hasFraction && undOvrCount > 1) { factor = 6.0; }   // fraction inside nested sums
+  else if (hasFraction && undOvrCount > 0) { factor = 4.5; }
+  else if (undOvrCount > 1) { factor = 4.5; }             // nested sums (∑∑): much taller
+  else if (undOvrCount === 1) { factor = 3.0; }           // single ∑
+  else if (hasFraction) { factor = 3.0; }
+  else if (hasSubSup || hasRadical) { factor = 2.2; }
   return Math.round(base * factor);
 }
 

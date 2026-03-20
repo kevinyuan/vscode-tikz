@@ -755,6 +755,18 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
         if (mathResult.formulas.length > 0) {
             outputChannel.appendLine(`[marp-export] Extracted ${mathResult.formulas.length} math formula(s) for OMML injection`);
         }
+        // Strip .eq-row / .eq-body div wrappers so display math placeholders are inline
+        // in the paragraph flow. Without stripping, LibreOffice creates a separate floating
+        // shape per formula, causing OMML to appear as a layer overlapping adjacent content.
+        if (isPptxEditable && mathResult.formulas.some(f => f.isDisplay)) {
+            md = md.replace(
+                /<div class="eq-row">\s*<div class="eq-body">\s*(MARPMATH\d+)\s*<\/div>(?:\s*<div class="eq-num">([^<]*)<\/div>)?\s*<\/div>/g,
+                (_m: string, placeholder: string, eqNum?: string) =>
+                    `\n\n${placeholder}${eqNum ? '    ' + eqNum.trim() : ''}\n\n`
+            );
+            // Collapse 3+ consecutive newlines to 2 to prevent extra blank paragraphs in PPTX
+            md = md.replace(/\n{3,}/g, '\n\n');
+        }
 
         // Write processed markdown to temp dir
         const processedMdPath = path.join(tmpDir, `${inputBasename}.md`);
@@ -1031,6 +1043,11 @@ function processShape(spXml: string, formulaMap: Map<string, ExtractedMath>, sli
 
   if (result === spXml) { return spXml; }
 
+  // Remove empty paragraphs adjacent to OMML — artifacts of \n\n placeholder wrapping
+  if (result.includes('a14:m')) {
+    result = removeEmptyParasAdjacentToOmml(result);
+  }
+
   // For display-only shapes: widen to slide width so centering works correctly
   if (displayOnly) { result = widenShape(result, slideCx); }
 
@@ -1065,13 +1082,35 @@ function widenShape(spXml: string, slideCx: number): string {
 // ─── Display-math layout adjustment ──────────────────────────────────────────
 
 /**
- * After OMML injection, detects display-math shapes that may overflow into
+ * Removes empty <a:p> paragraphs immediately before or after OMML-containing paragraphs
+ * within a single shape's XML. These empty paragraphs are artifacts of the \n\n wrapping
+ * added around math placeholders in extractAndReplaceMath().
+ */
+function removeEmptyParasAdjacentToOmml(spXml: string): string {
+  let result = spXml;
+  // Remove empty paragraph (no <a:r> or <a14:m>) immediately BEFORE an OMML paragraph
+  result = result.replace(
+    /<a:p>([\s\S]*?)<\/a:p>(\s*<a:p>[\s\S]*?<a14:m>)/g,
+    (_m, before, next) => /<a:r>|<a14:m>/.test(before) ? `<a:p>${before}</a:p>${next}` : next
+  );
+  // Remove empty paragraph immediately AFTER an OMML paragraph
+  result = result.replace(
+    /(<\/a14:m>[\s\S]*?<\/a:p>)\s*<a:p>([\s\S]*?)<\/a:p>/g,
+    (_m, ommlClose, after) =>
+      /<a:r>|<a14:m>/.test(after) ? `${ommlClose}<a:p>${after}</a:p>` : ommlClose
+  );
+  return result;
+}
+
+/**
+ * After OMML injection, detects shapes containing math that may overflow into
  * content below, and shifts those lower shapes down to avoid overlap.
  * Estimates formula height from font size and OMML structural complexity.
+ * Handles all OMML-containing shapes regardless of width or alignment.
  */
-function fixDisplayMathLayout(xml: string, slideCx: number, slideCy: number): string {
-  // Collect all widened display-math shapes (cx=slideCx, has a14:m + algn=ctr)
-  type ShapeInfo = { y: number; cy: number; estimatedCy: number };
+function fixDisplayMathLayout(xml: string, _slideCx: number, slideCy: number): string {
+  // Collect all shapes that contain OMML math (any cx, any alignment)
+  type ShapeInfo = { y: number; cy: number; cx: number; estimatedCy: number };
   const mathShapes: ShapeInfo[] = [];
 
   const spRe = /<p:sp>([\s\S]*?)<\/p:sp>/g;
@@ -1079,13 +1118,11 @@ function fixDisplayMathLayout(xml: string, slideCx: number, slideCy: number): st
   while ((spM = spRe.exec(xml)) !== null) {
     const inner = spM[1];
     if (!inner.includes('a14:m')) { continue; }
-    const cxM = /<a:ext\b[^>]*\bcx="(\d+)"/.exec(inner);
-    if (!cxM || parseInt(cxM[1], 10) !== slideCx) { continue; }
-    if (!inner.includes('algn="ctr"')) { continue; }
 
     const yM  = /<a:off\b[^>]*\by="(\d+)"/.exec(inner);
     const cyM = /<a:ext\b[^>]*\bcy="(\d+)"/.exec(inner);
-    if (!yM || !cyM) { continue; }
+    const cxM = /<a:ext\b[^>]*\bcx="(\d+)"/.exec(inner);
+    if (!yM || !cyM || !cxM) { continue; }
 
     const szM = /\bsz="(\d+)"/.exec(inner);
     const szHundredthsPt = szM ? parseInt(szM[1], 10) : 2000;
@@ -1094,6 +1131,7 @@ function fixDisplayMathLayout(xml: string, slideCx: number, slideCy: number): st
     mathShapes.push({
       y:           parseInt(yM[1],  10),
       cy:          parseInt(cyM[1], 10),
+      cx:          parseInt(cxM[1], 10),
       estimatedCy: estimateOmmlHeightEmu(ommlM ? ommlM[0] : '', szHundredthsPt),
     });
   }
@@ -1102,10 +1140,10 @@ function fixDisplayMathLayout(xml: string, slideCx: number, slideCy: number): st
   mathShapes.sort((a, b) => a.y - b.y);
 
   let result = xml;
-  for (const shape of mathShapes) {
-    const { y: shapeY, cy: currentCy, estimatedCy } = shape;
+  for (let idx = 0; idx < mathShapes.length; idx++) {
+    const { y: shapeY, cy: currentCy, cx: shapeCx, estimatedCy } = mathShapes[idx];
 
-    // Find the nearest shape whose top is strictly below the formula top
+    // Find the nearest shape whose top is strictly below the formula shape's top
     const nextY        = findNearestYBelow(result, shapeY);
     const available    = nextY - shapeY;
     const overflow     = estimatedCy - available;
@@ -1116,11 +1154,17 @@ function fixDisplayMathLayout(xml: string, slideCx: number, slideCy: number): st
       const actualShift  = Math.min(overflow, maxShift);
       if (actualShift > 0) {
         result = shiftShapesBelow(result, shapeY, actualShift);
+        // Propagate the shift to subsequent math shapes so their y values remain accurate
+        for (let j = idx + 1; j < mathShapes.length; j++) {
+          if (mathShapes[j].y > shapeY) {
+            mathShapes[j] = { ...mathShapes[j], y: mathShapes[j].y + actualShift };
+          }
+        }
       }
     }
 
-    // Update the formula shape's cy to estimated height
-    result = setShapeCy(result, shapeY, currentCy, slideCx, Math.max(currentCy, estimatedCy));
+    // Update the formula shape's cy to at least the estimated formula height
+    result = setShapeCy(result, shapeY, currentCy, shapeCx, Math.max(currentCy, estimatedCy));
   }
   return result;
 }
@@ -1171,17 +1215,17 @@ function shiftShapesBelow(xml: string, thresholdY: number, shiftEmu: number, max
   });
 }
 
-/** Sets the cy of the display-math shape uniquely identified by (y, originalCy, cx=slideCx). */
-function setShapeCy(xml: string, shapeY: number, originalCy: number, slideCx: number, newCy: number): string {
+/** Sets the cy of the math shape uniquely identified by (y, originalCy, cx). */
+function setShapeCy(xml: string, shapeY: number, originalCy: number, shapeCx: number, newCy: number): string {
   if (newCy === originalCy) { return xml; }
   return xml.replace(/<p:sp>([\s\S]*?)<\/p:sp>/g, (spXml, inner) => {
     const yM  = /<a:off\b[^>]*\by="(\d+)"/.exec(inner);
     const cyM = /<a:ext\b[^>]*\bcy="(\d+)"/.exec(inner);
     const cxM = /<a:ext\b[^>]*\bcx="(\d+)"/.exec(inner);
     if (!yM || !cyM || !cxM) { return spXml; }
-    if (parseInt(yM[1], 10)  !== shapeY)   { return spXml; }
+    if (parseInt(yM[1], 10)  !== shapeY)    { return spXml; }
     if (parseInt(cyM[1], 10) !== originalCy) { return spXml; }
-    if (parseInt(cxM[1], 10) !== slideCx)  { return spXml; }
+    if (parseInt(cxM[1], 10) !== shapeCx)   { return spXml; }
     return spXml.replace(/(<a:ext\b[^>]*)\bcy="\d+"/, `$1cy="${newCy}"`);
   });
 }

@@ -1163,8 +1163,8 @@ function fixDisplayMathLayout(xml: string, _slideCx: number, slideCy: number): s
       }
     }
 
-    // Update the formula shape's cy to at least the estimated formula height
-    result = setShapeCy(result, shapeY, currentCy, shapeCx, Math.max(currentCy, estimatedCy));
+    // Update the formula shape's cy to the estimated formula height (may shrink from widenShape minimum)
+    result = setShapeCy(result, shapeY, currentCy, shapeCx, estimatedCy);
   }
   return result;
 }
@@ -1178,9 +1178,9 @@ function estimateOmmlHeightEmu(omml: string, szHundredthsPt: number): number {
   const hasSubSup   = /subSup/.test(omml);           // ∫ with sub/superscript limits
   const hasRadical  = /<m:rad\b/.test(omml);
   let factor = 1.0;
-  if      (hasFraction && hasUndOvr) { factor = 3.5; }
-  else if (hasFraction || hasUndOvr) { factor = 2.5; }
-  else if (hasSubSup  || hasRadical) { factor = 1.8; }
+  if      (hasFraction && hasUndOvr) { factor = 4.0; }
+  else if (hasFraction || hasUndOvr) { factor = 3.0; }
+  else if (hasSubSup  || hasRadical) { factor = 2.2; }
   return Math.round(base * factor);
 }
 

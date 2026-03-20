@@ -280,10 +280,24 @@ function makeMroot(el: Element): string {
 }
 
 function makeMtable(el: Element): string {
-    const rows = childElements(el)
-        .filter(c => localName(c) === 'mtr')
-        .map(r => convertNode(r))
-        .join('');
+    const mtrRows = childElements(el).filter(c => localName(c) === 'mtr');
+
+    // Detect temml's \tag structure: single mtr.tml-tageqn with 3 mtd cells
+    // [empty-spacer | formula | tag-number]. The empty cell renders as a dashed
+    // placeholder box in PowerPoint, so we unwrap and emit only formula + tag.
+    if (mtrRows.length === 1) {
+        const cls = mtrRows[0].getAttribute('class') || '';
+        if (cls.includes('tml-tageqn')) {
+            const cells = childElements(mtrRows[0]).filter(c => localName(c) === 'mtd');
+            if (cells.length === 3) {
+                const formula = convertChildren(cells[1]);
+                const tag    = convertChildren(cells[2]);
+                return formula + tag;
+            }
+        }
+    }
+
+    const rows = mtrRows.map(r => convertNode(r)).join('');
     return `<m:m><m:mPr><m:ctrlPr/></m:mPr>${rows}</m:m>`;
 }
 

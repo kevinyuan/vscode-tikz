@@ -227,6 +227,13 @@ function makeMover(el: Element): string {
         if (base && isNaryBase(base)) {
             return makeNary(textContent(base), null, over, '');
         }
+        // ⏞ (U+23DE) overbrace: use groupChr with pos=top for stretchy rendering
+        if (chr === '⏞') {
+            return `<m:groupChr>` +
+                   `<m:groupChrPr><m:chr m:val="${xmlEscape(chr)}"/><m:pos m:val="top"/><m:vertJc m:val="bot"/><m:ctrlPr/></m:groupChrPr>` +
+                   `<m:e>${base ? convertNode(base) : ''}</m:e>` +
+                   `</m:groupChr>`;
+        }
         // Map to OMML combining character; null = use OMML default (no <m:chr>)
         const ommlChr = Object.prototype.hasOwnProperty.call(ACCENT_TO_OMML, chr)
             ? ACCENT_TO_OMML[chr]
@@ -244,12 +251,42 @@ function makeMover(el: Element): string {
 
 function makeMunder(el: Element): string {
     const [base, under] = childElements(el);
+
+    // Detect full underbrace-with-annotation: outer munder(munder(expr, ⏟), annotation).
+    // limLow+groupChr causes overlap (PowerPoint bounding-box bug). Matrix/eqArr wrappers
+    // misalign sigma display-mode limits (inner sigma baseline shifts relative to outer sigma).
+    // Fix: keep groupChr(pos=bot, e=expr) for the formula+brace (preserves all alignment),
+    // and emit the annotation via a null-byte sentinel. processParagraph in extension.ts
+    // detects the sentinel and injects the annotation as a separate <a:p> paragraph below,
+    // making physical overlap structurally impossible without touching formula internals.
+    if (base && localName(base) === 'munder') {
+        const innerKids = childElements(base);
+        if (innerKids.length >= 2) {
+            const innerMo = innerKids[1];
+            if (innerMo && localName(innerMo) === 'mo') {
+                const chr = textContent(innerMo);
+                if (chr === '⏟' || chr === '⌣') {
+                    const exprStr = convertNode(innerKids[0]!);
+                    const annotStr = under ? convertNode(under) : '';
+                    // \x00 sentinels are stripped by processParagraph; annotation becomes
+                    // a separate centered <a:p> paragraph inserted immediately after this one.
+                    return `<m:groupChr>` +
+                           `<m:groupChrPr><m:chr m:val="${xmlEscape(chr)}"/><m:pos m:val="bot"/><m:ctrlPr/></m:groupChrPr>` +
+                           `<m:e>${exprStr}</m:e>` +
+                           `</m:groupChr>\x00ANNOT_START\x00${annotStr}\x00ANNOT_END\x00`;
+                }
+            }
+        }
+    }
+
+    // Simple underbrace without annotation: munder(expr, ⏟)
     if (under && localName(under) === 'mo') {
         const chr = textContent(under);
         if (chr === '⏟' || chr === '⌣') {
-            return `<m:limLow><m:limLowPr><m:ctrlPr/></m:limLowPr>` +
+            return `<m:groupChr>` +
+                   `<m:groupChrPr><m:chr m:val="${xmlEscape(chr)}"/><m:pos m:val="bot"/><m:ctrlPr/></m:groupChrPr>` +
                    `<m:e>${base ? convertNode(base) : ''}</m:e>` +
-                   `<m:lim>${convertNode(under)}</m:lim></m:limLow>`;
+                   `</m:groupChr>`;
         }
     }
     return `<m:limLow><m:limLowPr><m:ctrlPr/></m:limLowPr>` +

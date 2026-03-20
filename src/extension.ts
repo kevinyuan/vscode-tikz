@@ -521,6 +521,18 @@ function registerEventHandlers(context: vscode.ExtensionContext): void {
         outputChannel.appendLine(`[doc-change] Rendering blocks for ${event.document.fileName}`);
         await previewManager!.renderDocument(event.document);
       }, 1000);
+    }),
+    // Also refresh on save: onDidChangeTextDocument fires for typed changes but NOT for
+    // saves where content is already up-to-date (e.g. manual Cmd+S without new edits,
+    // or format-on-save that leaves content identical).
+    vscode.workspace.onDidSaveTextDocument((doc) => {
+      if (doc.languageId !== 'markdown' || !previewManager) { return; }
+      lastMarkdownDocument = doc;
+      updateMarpContext(doc);
+      // Only trigger if no debounce is already pending (avoid double render after typing+save)
+      if (debounceTimer) { return; }
+      outputChannel.appendLine(`[doc-save] Rendering blocks for ${doc.fileName}`);
+      previewManager!.renderDocument(doc).catch(() => undefined);
     })
   );
 
@@ -1272,13 +1284,20 @@ function estimateOmmlHeightEmu(omml: string, szHundredthsPt: number): number {
   const undOvrCount  = (omml.match(/undOvr/g) || []).length;
   const hasSubSup    = /subSup/.test(omml);
   const hasRadical   = /<m:rad\b/.test(omml);
+  // groupChr = underbrace/overbrace with annotation; adds brace + label height on top
+  const hasGroupChr  = /<m:groupChr\b/.test(omml);
   let factor = 1.0;
-  if (hasFraction && undOvrCount > 1) { factor = 4.5; }   // fraction inside nested sums
+  // Base factor: accurate estimate of formula visual height (independent of groupChr)
+  if (hasFraction && undOvrCount > 1) { factor = 4.5; }
   else if (hasFraction && undOvrCount > 0) { factor = 4.5; }
   else if (undOvrCount > 1) { factor = 4.5; }             // nested sums (∑∑): much taller
-  else if (undOvrCount === 1) { factor = 3.0; }           // single ∑
+  else if (undOvrCount === 1) { factor = 3.0; }           // single ∑ with display limits
   else if (hasFraction) { factor = 3.0; }
   else if (hasSubSup || hasRadical) { factor = 2.2; }
+  // Underbrace/overbrace: groupChr brace extends ~0.5x below formula, and the annotation
+  // is injected as a separate <a:p> paragraph (~1.0x height) in the same shape.
+  // Total extra = ~1.5x. Applied only to formulas with underbrace/overbrace.
+  if (hasGroupChr) { factor += 1.5; }
   return Math.round(base * factor);
 }
 
@@ -1313,9 +1332,13 @@ function setShapeCy(spXml: string, cy: number): string {
   return spXml.replace(/(<a:ext\b[^>]*\bcy=")[^"]*"/, `$1${cy}"`);
 }
 
-/** Replaces all sz="N" font-size attributes inside a shape with the given value. */
+/** Downgrades sz="N" font-size attributes inside a shape to the given value.
+ *  Only replaces values ABOVE sz (fixes LibreOffice's 2000→bodySz inflation).
+ *  Values already below sz (e.g. annotation paragraphs at 1200) are left alone. */
 function normalizeShapeSz(spXml: string, sz: number): string {
-  return spXml.replace(/\bsz="\d+"/g, `sz="${sz}"`);
+  return spXml.replace(/\bsz="(\d+)"/g, (_m, n) =>
+    parseInt(n, 10) > sz ? `sz="${sz}"` : _m
+  );
 }
 
 /** Returns the smallest y > thresholdY among all <a:off y="..."/> in the slide XML. */
@@ -1402,9 +1425,39 @@ function processParagraph(paraXml: string, paraContent: string, formulaMap: Map<
   }
   const fallbackRPr = runs.find(r => r.rPr)?.rPr ?? '';
 
-  const newContent = buildParagraphContent(combinedText, runSegments, fallbackRPr, formulaMap);
+  let newContent = buildParagraphContent(combinedText, runSegments, fallbackRPr, formulaMap);
   const effectivePPr = centerAlign ? ensureCenteredPPr(pPr) : pPr;
-  return `<a:p>${effectivePPr}${newContent}${endParaRPr}</a:p>`;
+  let primaryPara = `<a:p>${effectivePPr}${newContent}${endParaRPr}</a:p>`;
+
+  // Extract underbrace annotation sentinels (\x00ANNOT_START\x00...\x00ANNOT_END\x00) that
+  // makeMunder embeds inside <m:oMath>. Each sentinel is stripped from the primary OMML and
+  // re-emitted as a separate centered <a:p> paragraph so annotations never overlap the brace.
+  if (primaryPara.includes('\x00ANNOT_START\x00')) {
+    outputChannel.appendLine(`[underbrace] Sentinel detected — extracting annotation as separate paragraph`);
+    const annotParas: string[] = [];
+    primaryPara = primaryPara.replace(/\x00ANNOT_START\x00([\s\S]*?)\x00ANNOT_END\x00/g,
+      (_m, annotOmml: string) => {
+        // spcBef: 20pt spacing above to clear the brace character below the formula.
+        // groupChr(pos=bot) visually extends below its declared paragraph height (PowerPoint
+        // bounding-box bug). 20pt compensates for the brace extension so annotation doesn't
+        // overlap. defRPr sz=1200: annotation at 12pt (one size smaller than body ~16.5pt).
+        // normalizeShapeSz only downscales, so sz=1200 < bodySz is preserved as-is.
+        // Render annotation as plain text (not OMML) — PowerPoint ignores <a:spcBef>
+        // on paragraphs containing only <a14:m> OMML objects.
+        const annotText = annotOmml.replace(/<[^>]+>/g, '').trim();
+        annotParas.push(
+          `<a:p>` +
+          `<a:pPr algn="ctr"><a:spcBef><a:spcPts val="2000"/></a:spcBef></a:pPr>` +
+          `<a:r><a:rPr lang="en-US" sz="1200" i="1"/><a:t>${xmlEscapeAttr(annotText)}</a:t></a:r>` +
+          `</a:p>`
+        );
+        return '';
+      }
+    );
+    return primaryPara + annotParas.join('');
+  }
+
+  return primaryPara;
 }
 
 /**

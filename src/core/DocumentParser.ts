@@ -60,8 +60,8 @@ export class DocumentParser {
                     codeContent = includeResult.value.content;
                     includedFiles.add(includeResult.value.filePath);
                 } else {
-                    // Store error as source so it propagates through rendering
-                    codeContent = `% Include error: ${includeResult.error.message}`;
+                    // Skip failed includes — the fence renderer handles error display
+                    continue;
                 }
             }
 

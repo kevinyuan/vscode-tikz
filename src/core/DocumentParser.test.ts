@@ -463,14 +463,13 @@ Line 5`;
             expect(included).toContain(path.join(tmpDir, 'tracked.tikz'));
         });
 
-        it('should handle missing include file gracefully', () => {
+        it('should skip blocks with missing include files', () => {
             const mdPath = path.join(tmpDir, 'test.md');
             const content = '```tikz\n%!include nonexistent.tikz\n```';
             const document = createMockDocument(content, `file://${mdPath}`, mdPath);
             const blocks = parser.parse(document);
 
-            expect(blocks).toHaveLength(1);
-            expect(blocks[0].source).toContain('Include error');
+            expect(blocks).toHaveLength(0);
         });
 
         it('should mix inline and included blocks', () => {

@@ -1,5 +1,8 @@
 /* TikZ diagram styles for VS Code built-in Markdown preview */
 
+/* Load Computer Modern fonts used by node-tikzjax SVG output. */
+@import url("../node_modules/node-tikzjax/css/fonts.css");
+
 .tikz-diagram {
     margin: 1.5em 0;
     padding: 16px;

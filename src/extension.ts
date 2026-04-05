@@ -102,12 +102,12 @@ export function activate(context: vscode.ExtensionContext) {
 
   documentParser = new DocumentParser();
   cacheManager = new CacheManager(context.globalState);
-  // Clear stale persistent cache from before the hash normalization fix
+  // Clear stale persistent cache when preprocessing changes
   const cacheVersion = context.globalState.get<number>('tikzjax.cacheVersion', 0);
-  if (cacheVersion < 2) {
+  if (cacheVersion < 3) {
     cacheManager.clear().then(() => {
-      context.globalState.update('tikzjax.cacheVersion', 2);
-      outputChannel.appendLine('Cleared stale persistent cache (hash scheme changed)');
+      context.globalState.update('tikzjax.cacheVersion', 3);
+      outputChannel.appendLine('Cleared stale persistent cache (document wrapper added)');
     });
   }
   configManager = new ConfigurationManager();
@@ -371,8 +371,9 @@ function scheduleBackgroundRender(): void {
 }
 
 // ── Watch external tikz files referenced by %!include ──
-let includeFileWatchers: vscode.Disposable[] = [];
+let includeFileWatchers: fs.FSWatcher[] = [];
 let watchedIncludePaths = new Set<string>();
+let includeWatchDebounce: NodeJS.Timeout | undefined;
 
 function updateIncludeFileWatcher(): void {
   if (!documentParser) { return; }
@@ -380,6 +381,7 @@ function updateIncludeFileWatcher(): void {
   if (!doc) { return; }
 
   const currentPaths = documentParser.getIncludedFiles(doc.uri.toString());
+  outputChannel.appendLine(`[include-watch] update: ${currentPaths.size} included file(s)`);
   // Skip if the set of watched paths hasn't changed
   if (currentPaths.size === watchedIncludePaths.size &&
       [...currentPaths].every(p => watchedIncludePaths.has(p))) {
@@ -387,25 +389,30 @@ function updateIncludeFileWatcher(): void {
   }
 
   // Dispose old watchers
-  for (const w of includeFileWatchers) { w.dispose(); }
+  for (const w of includeFileWatchers) { w.close(); }
   includeFileWatchers = [];
   watchedIncludePaths = new Set(currentPaths);
 
   for (const filePath of currentPaths) {
-    const watcher = vscode.workspace.createFileSystemWatcher(filePath);
-    const handler = () => {
-      outputChannel.appendLine(`[include-watch] File changed: ${filePath}`);
-      documentParser!.includeResolver.invalidate(filePath);
-      const mdDoc = findMarkdownDocument();
-      if (mdDoc && previewManager) {
-        previewManager.renderDocument(mdDoc).catch(() => undefined);
-      }
-    };
-    watcher.onDidChange(handler);
-    watcher.onDidCreate(handler);
-    watcher.onDidDelete(handler);
-    includeFileWatchers.push(watcher);
-    outputChannel.appendLine(`[include-watch] Watching: ${filePath}`);
+    try {
+      const watcher = fs.watch(filePath, () => {
+        outputChannel.appendLine(`[include-watch] File changed: ${filePath}`);
+        documentParser!.includeResolver.invalidate(filePath);
+        // Debounce rapid changes (e.g. editor save writes multiple events)
+        if (includeWatchDebounce) { clearTimeout(includeWatchDebounce); }
+        includeWatchDebounce = setTimeout(() => {
+          includeWatchDebounce = undefined;
+          const mdDoc = findMarkdownDocument();
+          if (mdDoc && previewManager) {
+            previewManager.renderDocument(mdDoc).catch(() => undefined);
+          }
+        }, 300);
+      });
+      includeFileWatchers.push(watcher);
+      outputChannel.appendLine(`[include-watch] Watching: ${filePath}`);
+    } catch (err: any) {
+      outputChannel.appendLine(`[include-watch] Failed to watch ${filePath}: ${err.message}`);
+    }
   }
 }
 
@@ -595,7 +602,7 @@ function registerEventHandlers(context: vscode.ExtensionContext): void {
   );
 
   context.subscriptions.push(new vscode.Disposable(() => {
-    for (const w of includeFileWatchers) { w.dispose(); }
+    for (const w of includeFileWatchers) { w.close(); }
     includeFileWatchers = [];
   }));
 

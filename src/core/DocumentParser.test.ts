@@ -1,3 +1,6 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 import { DocumentParser } from './DocumentParser';
 import { TikzBlock } from './TikzBlock';
 
@@ -50,11 +53,11 @@ jest.mock('vscode', () => ({
 /**
  * Creates a mock VS Code TextDocument for testing.
  */
-function createMockDocument(content: string, uri: string = 'file:///test.md'): any {
+function createMockDocument(content: string, uri: string = 'file:///test.md', fsPath: string = '/test.md'): any {
     const lines = content.split('\n');
 
     return {
-        uri: { toString: () => uri },
+        uri: { toString: () => uri, fsPath },
         getText: () => content,
         positionAt: (offset: number) => {
             let currentOffset = 0;
@@ -419,6 +422,75 @@ Line 5`;
             expect(blocks).toHaveLength(1);
             // The code starts on line 3 (after the opening fence on line 2)
             expect(blocks[0].lineNumber).toBe(3);
+        });
+    });
+
+    describe('parse with %!include', () => {
+        let tmpDir: string;
+
+        beforeEach(() => {
+            tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tikz-parser-test-'));
+        });
+
+        afterEach(() => {
+            fs.rmSync(tmpDir, { recursive: true, force: true });
+        });
+
+        it('should resolve %!include directive to file content', () => {
+            const tikzContent = '\\begin{tikzpicture}\n\\draw (0,0) -- (1,1);\n\\end{tikzpicture}';
+            fs.writeFileSync(path.join(tmpDir, 'diagram.tikz'), tikzContent);
+
+            const mdPath = path.join(tmpDir, 'test.md');
+            const content = '```tikz\n%!include diagram.tikz\n```';
+            const document = createMockDocument(content, `file://${mdPath}`, mdPath);
+            const blocks = parser.parse(document);
+
+            expect(blocks).toHaveLength(1);
+            expect(blocks[0].source).toBe(tikzContent);
+        });
+
+        it('should track included file paths', () => {
+            const tikzContent = '\\draw (0,0) -- (1,1);';
+            fs.writeFileSync(path.join(tmpDir, 'tracked.tikz'), tikzContent);
+
+            const mdPath = path.join(tmpDir, 'test.md');
+            const content = '```tikz\n%!include tracked.tikz\n```';
+            const document = createMockDocument(content, `file://${mdPath}`, mdPath);
+            parser.parse(document);
+
+            const included = parser.getIncludedFiles(document.uri.toString());
+            expect(included.size).toBe(1);
+            expect(included).toContain(path.join(tmpDir, 'tracked.tikz'));
+        });
+
+        it('should handle missing include file gracefully', () => {
+            const mdPath = path.join(tmpDir, 'test.md');
+            const content = '```tikz\n%!include nonexistent.tikz\n```';
+            const document = createMockDocument(content, `file://${mdPath}`, mdPath);
+            const blocks = parser.parse(document);
+
+            expect(blocks).toHaveLength(1);
+            expect(blocks[0].source).toContain('Include error');
+        });
+
+        it('should mix inline and included blocks', () => {
+            const tikzContent = '\\draw (0,0) circle (1);';
+            fs.writeFileSync(path.join(tmpDir, 'circle.tikz'), tikzContent);
+
+            const mdPath = path.join(tmpDir, 'test.md');
+            const content = `\`\`\`tikz
+\\draw (0,0) -- (1,1);
+\`\`\`
+
+\`\`\`tikz
+%!include circle.tikz
+\`\`\``;
+            const document = createMockDocument(content, `file://${mdPath}`, mdPath);
+            const blocks = parser.parse(document);
+
+            expect(blocks).toHaveLength(2);
+            expect(blocks[0].source).toContain('\\draw (0,0) -- (1,1);');
+            expect(blocks[1].source).toBe(tikzContent);
         });
     });
 

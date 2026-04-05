@@ -186,9 +186,26 @@ export function activate(context: vscode.ExtensionContext) {
 
   /**
    * Shared rendering logic — returns HTML for a TikZ source string.
+   * Resolves %!include directives before rendering.
    * Includes inline style fallbacks so output works inside Marp (which strips external CSS).
    */
   function renderTikzHtml(source: string): string {
+    // Resolve %!include directive if present
+    const doc = findMarkdownDocument();
+    if (doc && documentParser) {
+      const baseDir = path.dirname(doc.uri.fsPath);
+      const includeResult = documentParser.includeResolver.resolve(source, baseDir);
+      if (includeResult) {
+        if (includeResult.ok) {
+          source = includeResult.value.content;
+        } else {
+          // Return error HTML directly
+          const escaped = escapeHtml(includeResult.error.message);
+          return `<div class="tikz-diagram tikz-error" style="text-align:center;margin:1em 0;color:#c00"><div class="tikz-error-title">⚠ Include Error</div><pre class="tikz-error-message" style="white-space:pre-wrap">${escaped}</pre></div>\n`;
+        }
+      }
+    }
+
     const hash = generateHash(source.trim());
     const result = previewManager?.getSvg(hash);
     outputChannel.appendLine(`[render] content length=${source.length} trimmed length=${source.trim().length} hash=${hash.slice(0, 8)}`);
@@ -520,6 +537,7 @@ function registerEventHandlers(context: vscode.ExtensionContext): void {
         debounceTimer = undefined;
         outputChannel.appendLine(`[doc-change] Rendering blocks for ${event.document.fileName}`);
         await previewManager!.renderDocument(event.document);
+        updateIncludeFileWatcher();
       }, 1000);
     }),
     // Also refresh on save: onDidChangeTextDocument fires for typed changes but NOT for
@@ -532,9 +550,53 @@ function registerEventHandlers(context: vscode.ExtensionContext): void {
       // Only trigger if no debounce is already pending (avoid double render after typing+save)
       if (debounceTimer) { return; }
       outputChannel.appendLine(`[doc-save] Rendering blocks for ${doc.fileName}`);
-      previewManager!.renderDocument(doc).catch(() => undefined);
+      previewManager!.renderDocument(doc).then(() => updateIncludeFileWatcher()).catch(() => undefined);
     })
   );
+
+  // ── Watch external tikz files referenced by %!include ──
+  let includeFileWatchers: vscode.Disposable[] = [];
+  let watchedIncludePaths = new Set<string>();
+
+  function updateIncludeFileWatcher(): void {
+    if (!documentParser) { return; }
+    const doc = findMarkdownDocument();
+    if (!doc) { return; }
+
+    const currentPaths = documentParser.getIncludedFiles(doc.uri.toString());
+    // Skip if the set of watched paths hasn't changed
+    if (currentPaths.size === watchedIncludePaths.size &&
+        [...currentPaths].every(p => watchedIncludePaths.has(p))) {
+      return;
+    }
+
+    // Dispose old watchers
+    for (const w of includeFileWatchers) { w.dispose(); }
+    includeFileWatchers = [];
+    watchedIncludePaths = new Set(currentPaths);
+
+    for (const filePath of currentPaths) {
+      const watcher = vscode.workspace.createFileSystemWatcher(filePath);
+      const handler = () => {
+        outputChannel.appendLine(`[include-watch] File changed: ${filePath}`);
+        documentParser!.includeResolver.invalidate(filePath);
+        const mdDoc = findMarkdownDocument();
+        if (mdDoc && previewManager) {
+          previewManager.renderDocument(mdDoc).catch(() => undefined);
+        }
+      };
+      watcher.onDidChange(handler);
+      watcher.onDidCreate(handler);
+      watcher.onDidDelete(handler);
+      includeFileWatchers.push(watcher);
+      outputChannel.appendLine(`[include-watch] Watching: ${filePath}`);
+    }
+  }
+
+  context.subscriptions.push(new vscode.Disposable(() => {
+    for (const w of includeFileWatchers) { w.dispose(); }
+    includeFileWatchers = [];
+  }));
 
   // Watch for theme changes
   context.subscriptions.push(

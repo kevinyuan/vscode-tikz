@@ -23,6 +23,15 @@ export function preprocessSource(source: string): string {
         .map(line => line.trim())
         .filter(line => line.length > 0);
 
-    // Join lines back together with single newlines
-    return lines.join('\n');
+    processed = lines.join('\n');
+
+    if (!processed) { return processed; }
+
+    // Wrap in \begin{document}...\end{document} if not already present
+    // (node-tikzjax requires a complete LaTeX document structure)
+    if (!processed.includes('\\begin{document}')) {
+        processed = '\\begin{document}\n' + processed + '\n\\end{document}';
+    }
+
+    return processed;
 }

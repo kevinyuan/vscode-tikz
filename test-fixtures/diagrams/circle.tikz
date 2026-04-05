@@ -1,0 +1,5 @@
+\begin{tikzpicture}
+\draw[blue,thick] (0,0) circle (1.5);
+\fill[red] (0,0) circle (0.1);
+\node[below] at (0,-1.8) {Circle};
+\end{tikzpicture}

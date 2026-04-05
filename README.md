@@ -50,6 +50,7 @@ More TikZ diagram examples can be found in this article: [Decoding the Taalas HC
 - **Speaker Notes Panel** ✦: Live speaker notes extracted from Marp HTML comments, displayed alongside the slide preview
 - **Rich Package Support**: Use chemfig, circuitikz, pgfplots, tikz-cd, and more
 - **Dark Mode**: Automatic color inversion for seamless dark theme integration
+- **External File Include**: Reference TikZ files with `%!include` — keep Markdown clean, edit diagrams separately
 - **Smart Caching**: Previously rendered diagrams load instantly
 - **Error Handling**: Clear error messages with retry options
 - **Syntax Highlighting**: LaTeX syntax highlighting in tikz code blocks
@@ -390,6 +391,38 @@ You can also export from the command line using the bundled `marp-tikz.js` scrip
 node marp-tikz.js slides.md -- --pptx --allow-local-files --html
 node marp-tikz.js slides.md -- --pdf --allow-local-files --html
 ```
+
+## External File Include
+
+Keep your Markdown clean by storing TikZ diagrams in separate `.tikz` files. Use the `%!include` directive to reference them:
+
+````markdown
+```tikz
+%!include diagrams/circuit.tikz
+```
+````
+
+The included file should contain complete TikZ code (with `\begin{document}` / `\end{document}`):
+
+```latex
+% diagrams/circuit.tikz
+\usepackage{circuitikz}
+\begin{document}
+\begin{circuitikz}
+  \draw (0,0) to[battery1, l=$V$] (0,3)
+        to[R=$R_1$] (3,3)
+        to[R=$R_2$] (3,0)
+        -- (0,0);
+\end{circuitikz}
+\end{document}
+```
+
+- **Relative paths** are resolved from the Markdown file's directory
+- **Absolute paths** are also supported
+- **Auto-refresh**: The preview updates automatically when you edit and save the included file
+- **Per-file caching**: Unchanged files are not re-read or re-rendered
+
+This is especially useful for AI-assisted workflows — each diagram can be maintained independently in its own file.
 
 ## Tips and Tricks
 

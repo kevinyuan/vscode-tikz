@@ -362,11 +362,51 @@ function scheduleBackgroundRender(): void {
     outputChannel.appendLine(`[bg-render] Starting render for ${doc.fileName}`);
     try {
       await previewManager.renderDocument(doc);
+      updateIncludeFileWatcher();
       outputChannel.appendLine('[bg-render] Render complete');
     } catch (err: any) {
       outputChannel.appendLine(`[bg-render] Render failed: ${err.message}`);
     }
   }, 50);
+}
+
+// ── Watch external tikz files referenced by %!include ──
+let includeFileWatchers: vscode.Disposable[] = [];
+let watchedIncludePaths = new Set<string>();
+
+function updateIncludeFileWatcher(): void {
+  if (!documentParser) { return; }
+  const doc = findMarkdownDocument();
+  if (!doc) { return; }
+
+  const currentPaths = documentParser.getIncludedFiles(doc.uri.toString());
+  // Skip if the set of watched paths hasn't changed
+  if (currentPaths.size === watchedIncludePaths.size &&
+      [...currentPaths].every(p => watchedIncludePaths.has(p))) {
+    return;
+  }
+
+  // Dispose old watchers
+  for (const w of includeFileWatchers) { w.dispose(); }
+  includeFileWatchers = [];
+  watchedIncludePaths = new Set(currentPaths);
+
+  for (const filePath of currentPaths) {
+    const watcher = vscode.workspace.createFileSystemWatcher(filePath);
+    const handler = () => {
+      outputChannel.appendLine(`[include-watch] File changed: ${filePath}`);
+      documentParser!.includeResolver.invalidate(filePath);
+      const mdDoc = findMarkdownDocument();
+      if (mdDoc && previewManager) {
+        previewManager.renderDocument(mdDoc).catch(() => undefined);
+      }
+    };
+    watcher.onDidChange(handler);
+    watcher.onDidCreate(handler);
+    watcher.onDidDelete(handler);
+    includeFileWatchers.push(watcher);
+    outputChannel.appendLine(`[include-watch] Watching: ${filePath}`);
+  }
 }
 
 /** Find the markdown document — try activeTextEditor first, fall back to tracked doc */
@@ -553,45 +593,6 @@ function registerEventHandlers(context: vscode.ExtensionContext): void {
       previewManager!.renderDocument(doc).then(() => updateIncludeFileWatcher()).catch(() => undefined);
     })
   );
-
-  // ── Watch external tikz files referenced by %!include ──
-  let includeFileWatchers: vscode.Disposable[] = [];
-  let watchedIncludePaths = new Set<string>();
-
-  function updateIncludeFileWatcher(): void {
-    if (!documentParser) { return; }
-    const doc = findMarkdownDocument();
-    if (!doc) { return; }
-
-    const currentPaths = documentParser.getIncludedFiles(doc.uri.toString());
-    // Skip if the set of watched paths hasn't changed
-    if (currentPaths.size === watchedIncludePaths.size &&
-        [...currentPaths].every(p => watchedIncludePaths.has(p))) {
-      return;
-    }
-
-    // Dispose old watchers
-    for (const w of includeFileWatchers) { w.dispose(); }
-    includeFileWatchers = [];
-    watchedIncludePaths = new Set(currentPaths);
-
-    for (const filePath of currentPaths) {
-      const watcher = vscode.workspace.createFileSystemWatcher(filePath);
-      const handler = () => {
-        outputChannel.appendLine(`[include-watch] File changed: ${filePath}`);
-        documentParser!.includeResolver.invalidate(filePath);
-        const mdDoc = findMarkdownDocument();
-        if (mdDoc && previewManager) {
-          previewManager.renderDocument(mdDoc).catch(() => undefined);
-        }
-      };
-      watcher.onDidChange(handler);
-      watcher.onDidCreate(handler);
-      watcher.onDidDelete(handler);
-      includeFileWatchers.push(watcher);
-      outputChannel.appendLine(`[include-watch] Watching: ${filePath}`);
-    }
-  }
 
   context.subscriptions.push(new vscode.Disposable(() => {
     for (const w of includeFileWatchers) { w.dispose(); }

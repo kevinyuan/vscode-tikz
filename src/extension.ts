@@ -104,10 +104,10 @@ export function activate(context: vscode.ExtensionContext) {
   cacheManager = new CacheManager(context.globalState);
   // Clear stale persistent cache when preprocessing changes
   const cacheVersion = context.globalState.get<number>('tikzjax.cacheVersion', 0);
-  if (cacheVersion < 3) {
+  if (cacheVersion < 4) {
     cacheManager.clear().then(() => {
-      context.globalState.update('tikzjax.cacheVersion', 3);
-      outputChannel.appendLine('Cleared stale persistent cache (document wrapper added)');
+      context.globalState.update('tikzjax.cacheVersion', 4);
+      outputChannel.appendLine('Cleared stale persistent cache (hash normalization v2)');
     });
   }
   configManager = new ConfigurationManager();

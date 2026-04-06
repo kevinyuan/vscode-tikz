@@ -137,6 +137,50 @@ describe('transformSvgColors', () => {
                 const result = transformSvgColors(svg, true);
                 expect(result).toBe('<rect fill="#ff0000" stroke="#00ff00" />');
             });
+
+            it('should transform colors inside inline style attributes', () => {
+                const svg = '<path style="fill:#000; stroke: rgb(255, 255, 255); color:black" />';
+                const result = transformSvgColors(svg, true);
+                const bgColor = 'var(--vscode-editor-background)';
+
+                expect(result).toContain('fill:currentColor');
+                expect(result).toContain(`stroke: ${bgColor}`);
+                expect(result).toContain('color:currentColor');
+            });
+
+            it('should transform single-quoted SVG color attributes', () => {
+                const svg = "<g fill='#000000' stroke='white' color='rgb(0,0,0)'></g>";
+                const result = transformSvgColors(svg, true);
+                const bgColor = 'var(--vscode-editor-background)';
+
+                expect(result).toContain('fill="currentColor"');
+                expect(result).toContain(`stroke="${bgColor}"`);
+                expect(result).toContain('color="currentColor"');
+            });
+
+            it('should set currentColor for text without explicit fill', () => {
+                // Common TikZJax shape: text has stroke set, but no fill/color attribute.
+                const svg = '<text x="0" y="0" stroke="none">Hello</text>';
+                const result = transformSvgColors(svg, true);
+
+                expect(result).toContain('fill="currentColor"');
+            });
+
+            it('should set currentColor for tikzjax text-like output', () => {
+                // Targeted regression test requested by user: minimal text node from renderer.
+                const svg = '<text stroke="none">H</text>';
+                const result = transformSvgColors(svg, true);
+
+                expect(result).toBe('<text stroke="none" fill="currentColor">H</text>');
+            });
+
+            it('should keep explicit text fill behavior unchanged', () => {
+                // Explicit fill should continue to flow through existing white/black replacement logic.
+                const svg = '<text fill="#fff">Hello</text>';
+                const result = transformSvgColors(svg, true);
+
+                expect(result).toBe('<text fill="var(--vscode-editor-background)">Hello</text>');
+            });
         });
 
         describe('edge cases', () => {

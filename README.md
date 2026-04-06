@@ -7,6 +7,14 @@ Render precise and beautiful TikZ diagrams directly in your Markdown files. Crea
 
 For Marp presentations, the extension also provides a **Slide Navigator** with thumbnail sidebar and a **speaker notes panel** — features not available in the standard Marp VS Code extension.
 
+## What's New (since v0.4.0)
+
+- **External File Include** — Reference TikZ files with `%!include` directive; auto-refreshes on file changes
+- **Editable PPTX Export** — One-click export of Marp slides with native math objects (OMML), not images
+- **Slide Navigator & Speaker Notes** — Thumbnail sidebar and live speaker notes panel for Marp decks
+- **Dark Mode Text Fix** — Correct font loading and color inversion for TikZ text in dark themes
+- **Windows Compatibility** — Fixed infinite render loop caused by CRLF line endings
+
 ## Gallery
 
 <table>
@@ -115,6 +123,38 @@ To make diagrams larger in Marp slides, use TikZ's `scale` option:
 ````
 
 A `scale=2` factor generally makes diagrams appear at a similar visual size to the standard Markdown preview.
+
+## External File Include
+
+Keep your Markdown clean by storing TikZ diagrams in separate `.tikz` files. Use the `%!include` directive to reference them:
+
+````markdown
+```tikz
+%!include diagrams/circuit.tikz
+```
+````
+
+The included file should contain complete TikZ code (with `\begin{document}` / `\end{document}`):
+
+```latex
+% diagrams/circuit.tikz
+\usepackage{circuitikz}
+\begin{document}
+\begin{circuitikz}
+  \draw (0,0) to[battery1, l=$V$] (0,3)
+        to[R=$R_1$] (3,3)
+        to[R=$R_2$] (3,0)
+        -- (0,0);
+\end{circuitikz}
+\end{document}
+```
+
+- **Relative paths** are resolved from the Markdown file's directory
+- **Absolute paths** are also supported
+- **Auto-refresh**: The preview updates automatically when you edit and save the included file
+- **Per-file caching**: Unchanged files are not re-read or re-rendered
+
+This is especially useful for AI-assisted workflows — each diagram can be maintained independently in its own file.
 
 ## Usage
 
@@ -391,38 +431,6 @@ You can also export from the command line using the bundled `marp-tikz.js` scrip
 node marp-tikz.js slides.md -- --pptx --allow-local-files --html
 node marp-tikz.js slides.md -- --pdf --allow-local-files --html
 ```
-
-## External File Include
-
-Keep your Markdown clean by storing TikZ diagrams in separate `.tikz` files. Use the `%!include` directive to reference them:
-
-````markdown
-```tikz
-%!include diagrams/circuit.tikz
-```
-````
-
-The included file should contain complete TikZ code (with `\begin{document}` / `\end{document}`):
-
-```latex
-% diagrams/circuit.tikz
-\usepackage{circuitikz}
-\begin{document}
-\begin{circuitikz}
-  \draw (0,0) to[battery1, l=$V$] (0,3)
-        to[R=$R_1$] (3,3)
-        to[R=$R_2$] (3,0)
-        -- (0,0);
-\end{circuitikz}
-\end{document}
-```
-
-- **Relative paths** are resolved from the Markdown file's directory
-- **Absolute paths** are also supported
-- **Auto-refresh**: The preview updates automatically when you edit and save the included file
-- **Per-file caching**: Unchanged files are not re-read or re-rendered
-
-This is especially useful for AI-assisted workflows — each diagram can be maintained independently in its own file.
 
 ## Tips and Tricks
 

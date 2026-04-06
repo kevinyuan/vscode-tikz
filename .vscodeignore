@@ -3,8 +3,8 @@
 .kiro/**
 .github/**
 src/**
-out/**
-node_modules/**
+!src/webview/**/*.html
+dist/**
 .gitignore
 .eslintrc.json
 .eslintrc
@@ -42,3 +42,14 @@ PUBLISHING.md
 create-icon.js
 icon.svg
 package-lock.json
+
+# Exclude dev dependencies
+node_modules/@types/**
+node_modules/@typescript-eslint/**
+node_modules/eslint/**
+node_modules/jest/**
+node_modules/ts-jest/**
+node_modules/typescript/**
+node_modules/fast-check/**
+node_modules/sharp/**
+node_modules/esbuild/**

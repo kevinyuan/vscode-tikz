@@ -2,7 +2,7 @@
   "name": "vscode-tikzjax",
   "displayName": "TikZ in Markdown",
   "description": "Render TikZ diagrams in Markdown/Marp live preview and export editable PPTX",
-  "version": "0.4.30",
+  "version": "0.4.31",
   "publisher": "kevinyuan",
   "icon": "icon.png",
   "author": {

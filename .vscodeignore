@@ -3,7 +3,8 @@
 .kiro/**
 .github/**
 src/**
-!src/webview/**/*.html
+out/**
+node_modules/**
 .gitignore
 .eslintrc.json
 .eslintrc
@@ -30,19 +31,14 @@ icon-placeholder.txt
 examples/**
 imgs/**
 *.vsix
+test-fixtures/**
+docs/**
+CLAUDE.md
+memory-leak-fixes.md
 BUILD_INSTRUCTIONS.md
 TESTING_CHECKLIST.md
 ICON_INSTRUCTIONS.md
 PUBLISHING.md
 create-icon.js
 icon.svg
-
-# Exclude dev dependencies
-node_modules/@types/**
-node_modules/@typescript-eslint/**
-node_modules/eslint/**
-node_modules/jest/**
-node_modules/ts-jest/**
-node_modules/typescript/**
-node_modules/fast-check/**
-node_modules/sharp/**
+package-lock.json

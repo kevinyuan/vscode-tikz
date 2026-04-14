@@ -121,38 +121,69 @@ describe('IncludeResolver', () => {
     });
 
     describe('caching', () => {
-        it('should cache file content after first read', () => {
-            const tikzContent = '\\draw (0,0) -- (1,1);';
-            const filePath = writeTikzFile('cached.tikz', tikzContent);
+        it('should auto-refresh when the underlying file changes (no manual invalidate)', () => {
+            const original = '\\draw (0,0) -- (1,1);';
+            const filePath = writeTikzFile('auto.tikz', original);
 
-            // First resolve
-            const result1 = resolver.resolve('%!include cached.tikz', tmpDir);
+            const result1 = resolver.resolve('%!include auto.tikz', tmpDir);
             expect(result1!.ok).toBe(true);
 
-            // Modify file on disk
-            fs.writeFileSync(filePath, 'modified content', 'utf-8');
+            // Overwrite file with different content + bump mtime ~1s into the future
+            // to survive filesystems with coarse mtime granularity.
+            const updated = '\\draw (0,0) -- (9,9);\n\\node at (5,5) {new};';
+            fs.writeFileSync(filePath, updated, 'utf-8');
+            const future = new Date(Date.now() + 2000);
+            fs.utimesSync(filePath, future, future);
 
-            // Second resolve should return cached content
-            const result2 = resolver.resolve('%!include cached.tikz', tmpDir);
+            const result2 = resolver.resolve('%!include auto.tikz', tmpDir);
             expect(result2!.ok).toBe(true);
             if (result2!.ok) {
-                expect(result2!.value.content).toBe(tikzContent); // still original
+                expect(result2!.value.content).toBe(updated);
             }
         });
 
-        it('should re-read file after invalidate', () => {
+        it('should auto-refresh when file size changes even if mtime is stale', () => {
+            const original = 'short';
+            const filePath = writeTikzFile('size.tikz', original);
+
+            resolver.resolve('%!include size.tikz', tmpDir);
+
+            // Write longer content but force mtime back to the old value.
+            const updated = 'this is significantly longer content than the original';
+            const originalMtime = fs.statSync(filePath).mtime;
+            fs.writeFileSync(filePath, updated, 'utf-8');
+            fs.utimesSync(filePath, originalMtime, originalMtime);
+
+            const result = resolver.resolve('%!include size.tikz', tmpDir);
+            expect(result!.ok).toBe(true);
+            if (result!.ok) {
+                expect(result!.value.content).toBe(updated);
+            }
+        });
+
+        it('should drop cache entry when file becomes unreadable', () => {
+            const filePath = writeTikzFile('gone.tikz', 'content');
+            resolver.resolve('%!include gone.tikz', tmpDir);
+            expect(resolver.cachedPaths).toContain(filePath);
+
+            fs.rmSync(filePath);
+            const result = resolver.resolve('%!include gone.tikz', tmpDir);
+            expect(result!.ok).toBe(false);
+            expect(resolver.cachedPaths).not.toContain(filePath);
+        });
+
+        it('should re-read file after explicit invalidate', () => {
             const tikzContent = '\\draw (0,0) -- (1,1);';
             const filePath = writeTikzFile('invalidate.tikz', tikzContent);
 
-            // First resolve
             resolver.resolve('%!include invalidate.tikz', tmpDir);
 
-            // Modify and invalidate
             const newContent = '\\draw (0,0) -- (9,9);';
             fs.writeFileSync(filePath, newContent, 'utf-8');
+            const future = new Date(Date.now() + 2000);
+            fs.utimesSync(filePath, future, future);
             resolver.invalidate(filePath);
 
-            // Should now return new content
             const result = resolver.resolve('%!include invalidate.tikz', tmpDir);
             expect(result!.ok).toBe(true);
             if (result!.ok) {

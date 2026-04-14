@@ -791,13 +791,33 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
         if (action !== 'Continue Anyway') { return; }
       }
       let md = doc.getText();
+      const baseDir = path.dirname(doc.uri.fsPath);
 
-      // Find all tikz blocks
+      // Find all tikz blocks. Each block captures:
+      //   full:    the raw fence (used to locate-and-replace in md)
+      //   source:  the content to hand to the renderer — AFTER resolving
+      //            any %!include directive so the TeX engine never sees
+      //            a literal '%!include foo.tikz' line (which would crash
+      //            inside tikzjax with "Cannot read properties of null
+      //            (reading 'outerHTML')").
       const tikzRegex = /^```tikz\s*$([\s\S]*?)^```\s*$/gm;
-      const blocks: { full: string; source: string }[] = [];
+      const blocks: { full: string; source: string; includeError?: string }[] = [];
       let match;
       while ((match = tikzRegex.exec(md)) !== null) {
-        blocks.push({ full: match[0], source: match[1] });
+        const rawSource = match[1];
+        let resolvedSource = rawSource;
+        let includeError: string | undefined;
+        if (documentParser) {
+          const includeResult = documentParser.includeResolver.resolve(rawSource, baseDir);
+          if (includeResult) {
+            if (includeResult.ok) {
+              resolvedSource = includeResult.value.content;
+            } else {
+              includeError = includeResult.error.message;
+            }
+          }
+        }
+        blocks.push({ full: match[0], source: resolvedSource, includeError });
       }
 
       // Create temp directory for processed files
@@ -811,6 +831,13 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
           for (let i = 0; i < blocks.length; i++) {
             if (token.isCancellationRequested) { return; }
             progress.report({ message: `Rendering diagram ${i + 1}/${blocks.length}…` });
+
+            if (blocks[i].includeError) {
+              outputChannel.appendLine(`[marp-export] Include failed for block ${i + 1}: ${blocks[i].includeError}`);
+              md = md.replace(blocks[i].full, `<p style="color:red;">TikZ include failed: ${escapeHtml(blocks[i].includeError!)}</p>`);
+              continue;
+            }
+
             try {
               const svg = await previewManager!.renderTikzToSvg(blocks[i].source);
               const fixed = fixSvgDimensions(svg);

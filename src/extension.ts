@@ -11,6 +11,7 @@ import { MarpSlideNavigator } from './preview/MarpSlideNavigator';
 import { generateHash } from './utils/hash';
 import { extractAndReplaceMath, ExtractedMath } from './utils/mathPreprocessor';
 import { latexToOmml } from './utils/mathToOmml';
+import { injectMarpCjkFont } from './utils/marpCjkFont';
 
 
 let previewManager: PreviewManager | undefined;
@@ -849,6 +850,11 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
             // Collapse 3+ consecutive newlines to 2 to prevent extra blank paragraphs in PPTX
             md = md.replace(/\n{3,}/g, '\n\n');
         }
+
+        // Inject CJK font stack so Chinese / Japanese / Korean glyphs render
+        // in both PDF (Chromium) and PPTX (LibreOffice) exports. No-op if the
+        // front-matter already defines a `style:` key.
+        md = injectMarpCjkFont(md);
 
         // Write processed markdown to temp dir
         const processedMdPath = path.join(tmpDir, `${inputBasename}.md`);

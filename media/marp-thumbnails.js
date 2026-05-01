@@ -10,16 +10,22 @@
     var sidebar = null;
     var toggle = null;
     var toolbar = null;
-    var isVisible = false;
-    var viewMode = 'small'; // 'small' | 'big' | 'outline'
-    var styleEl = null;
-    var notesPanel = null;
-    var notesVisible = false;
-    var notesBtn = null;
-    var NOTES_HEIGHT_KEY = 'marpNotesHeight';
+    var SIDEBAR_VISIBLE_KEY = 'marpSidebarVisible';
+    var SIDEBAR_MODE_KEY    = 'marpSidebarMode';
+    var NOTES_VISIBLE_KEY   = 'marpNotesVisible';
+    var NOTES_HEIGHT_KEY    = 'marpNotesHeight';
+
+    function ssGet(key) { try { return sessionStorage.getItem(key); } catch (e) { return null; } }
+    function ssSet(key, val) { try { sessionStorage.setItem(key, String(val)); } catch (e) {} }
+
+    var isVisible   = ssGet(SIDEBAR_VISIBLE_KEY) === 'true';
+    var viewMode    = ssGet(SIDEBAR_MODE_KEY) || 'small'; // 'small' | 'big' | 'outline'
+    var styleEl     = null;
+    var notesPanel  = null;
+    var notesVisible = ssGet(NOTES_VISIBLE_KEY) === 'true';
+    var notesBtn    = null;
     var notesHeight = (function () {
-        try { var v = parseInt(sessionStorage.getItem(NOTES_HEIGHT_KEY), 10); if (v > 0) { return v; } } catch (e) {}
-        return 150;
+        var v = parseInt(ssGet(NOTES_HEIGHT_KEY), 10); return (v > 0) ? v : 150;
     })();
     var currentSlideIdx = 0;
     var slideLineNumbers = []; // Source line numbers for each slide (injected by extension)
@@ -296,6 +302,7 @@
         toggle.style.display = isVisible ? 'none' : 'flex';
         toggle.addEventListener('click', function () {
             isVisible = true;
+            ssSet(SIDEBAR_VISIBLE_KEY, 'true');
             if (sidebar) { sidebar.classList.remove('collapsed'); }
             toggle.style.display = 'none';
             document.body.style.marginLeft = getSidebarWidth() + 'px';
@@ -335,6 +342,7 @@
             btn.addEventListener('click', function () {
                 if (viewMode === m.id) { return; }
                 viewMode = m.id;
+                ssSet(SIDEBAR_MODE_KEY, viewMode);
                 var btns = toolbar.querySelectorAll('.marp-toolbar-btn[data-mode]');
                 for (var j = 0; j < btns.length; j++) { btns[j].classList.toggle('active', btns[j].dataset.mode === m.id); }
                 applySidebarLayout();
@@ -350,6 +358,7 @@
         notesBtn.title = 'Speaker notes';
         notesBtn.addEventListener('click', function () {
             notesVisible = !notesVisible;
+            ssSet(NOTES_VISIBLE_KEY, notesVisible);
             notesBtn.classList.toggle('active', notesVisible);
             if (notesPanel) { notesPanel.classList.toggle('collapsed', !notesVisible); }
             document.body.style.marginBottom = notesVisible ? notesHeight + 'px' : '0';
@@ -373,6 +382,7 @@
         closeBtn.title = 'Close panel';
         closeBtn.addEventListener('click', function () {
             isVisible = false;
+            ssSet(SIDEBAR_VISIBLE_KEY, 'false');
             if (sidebar) { sidebar.classList.add('collapsed'); }
             if (toggle) { toggle.style.display = 'flex'; }
             document.body.style.marginLeft = '0';
@@ -650,7 +660,7 @@
                 var newH = Math.round(Math.max(60, Math.min(window.innerHeight * 0.7, startH + startY - e.clientY)));
                 if (newH === notesHeight) { return; }
                 notesHeight = newH;
-                try { sessionStorage.setItem(NOTES_HEIGHT_KEY, String(notesHeight)); } catch (e) {}
+                ssSet(NOTES_HEIGHT_KEY, notesHeight);
                 notesPanel.style.height = notesHeight + 'px';
                 document.body.style.marginBottom = notesHeight + 'px';
                 detectAndHighlight();

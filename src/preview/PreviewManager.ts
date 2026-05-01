@@ -92,8 +92,6 @@ export class PreviewManager {
                     const processed = this._applyPostProcessing(cached.svg, darkMode);
                     this._setSvgCache(block.hash, { svg: processed });
                     renderedCount++;
-                    // Nudge after each cached block so it appears immediately
-                    await this._nudgeDocument(document);
                     continue;
                 }
 

@@ -890,8 +890,6 @@
             // Capture scroll anchor before content is replaced
             var scrollAnchorIdx = currentSlideIdx;
             var scrollAnchorY = window.scrollY;
-            // Force full rebuild: slide content may have changed even if count is the same
-            if (sidebar) { delete sidebar.dataset.slideCount; }
             setTimeout(function () {
                 buildThumbnails();
                 checkToggleSignal();

@@ -227,7 +227,46 @@
             '  font-size: 11px; font-weight: bold; opacity: 0.5;',
             '  margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.5px;',
             '}',
-            '#marp-notes-content { white-space: pre-wrap; }',
+            '#marp-notes-content { line-height: 1.6; }',
+            '#marp-notes-content p { margin: 0 0 0.5em; }',
+            '#marp-notes-content p:last-child { margin-bottom: 0; }',
+            '#marp-notes-content h1, #marp-notes-content h2, #marp-notes-content h3 {',
+            '  margin: 0.6em 0 0.3em; font-size: 1em; font-weight: bold;',
+            '}',
+            '#marp-notes-content h1 { font-size: 1.15em; }',
+            '#marp-notes-content h2 { font-size: 1.07em; }',
+            '#marp-notes-content code {',
+            '  font-family: var(--vscode-editor-font-family, monospace);',
+            '  background: var(--vscode-textCodeBlock-background, rgba(128,128,128,0.2));',
+            '  border-radius: 3px; padding: 0 3px; font-size: 0.9em;',
+            '}',
+            '#marp-notes-content pre {',
+            '  background: var(--vscode-textCodeBlock-background, rgba(128,128,128,0.2));',
+            '  border-radius: 4px; padding: 8px 10px; overflow-x: auto;',
+            '  margin: 0.4em 0; font-size: 0.88em;',
+            '}',
+            '#marp-notes-content pre code { background: none; padding: 0; }',
+            '#marp-notes-content ul, #marp-notes-content ol {',
+            '  margin: 0.3em 0; padding-left: 1.4em;',
+            '}',
+            '#marp-notes-content li { margin: 0.1em 0; }',
+            '#marp-notes-content table {',
+            '  border-collapse: collapse; margin: 0.5em 0;',
+            '  font-size: 0.93em; width: 100%;',
+            '}',
+            '#marp-notes-content th, #marp-notes-content td {',
+            '  border: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.4));',
+            '  padding: 3px 8px; text-align: left;',
+            '}',
+            '#marp-notes-content th {',
+            '  background: var(--vscode-textCodeBlock-background, rgba(128,128,128,0.15));',
+            '  font-weight: bold;',
+            '}',
+            '#marp-notes-content a { color: var(--vscode-textLink-foreground, #4da3ff); }',
+            '#marp-notes-content hr {',
+            '  border: none; border-top: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.35));',
+            '  margin: 0.6em 0;',
+            '}',
             '#marp-notes-content:empty::after {',
             '  content: "No speaker notes for this slide.";',
             '  opacity: 0.4; font-style: italic;',
@@ -698,16 +737,117 @@
         }
     }
 
+    /** Minimal Markdown \u2192 HTML renderer (bold, italic, code, lists, tables, links, headings). */
+    function renderMarkdown(src) {
+        if (!src) { return ''; }
+        var esc = function (s) {
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        };
+        var inline = function (s) {
+            return s
+                .replace(/`([^`]+)`/g, function (_, c) { return '<code>' + esc(c) + '</code>'; })
+                .replace(/\*\*\*(.+?)\*\*\*/g, '<strong><em>$1</em></strong>')
+                .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+                .replace(/__(.+?)__/g, '<strong>$1</strong>')
+                .replace(/\*(.+?)\*/g, '<em>$1</em>')
+                .replace(/_(.+?)_/g, '<em>$1</em>')
+                .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2">$1</a>');
+        };
+        var lines = src.split('\n');
+        var out = [];
+        var i = 0;
+        var flushPara = function (buf) {
+            if (buf.length) { out.push('<p>' + inline(esc(buf.join(' '))) + '</p>'); }
+            return [];
+        };
+        var para = [];
+        while (i < lines.length) {
+            var line = lines[i];
+            if (/^```/.test(line)) {
+                para = flushPara(para);
+                var lang = line.slice(3).trim();
+                var codeLines = [];
+                i++;
+                while (i < lines.length && !/^```/.test(lines[i])) { codeLines.push(esc(lines[i])); i++; }
+                out.push('<pre><code' + (lang ? ' class="language-' + esc(lang) + '"' : '') + '>' + codeLines.join('\n') + '</code></pre>');
+                i++;
+                continue;
+            }
+            var hm = line.match(/^(#{1,3})\s+(.*)/);
+            if (hm) {
+                para = flushPara(para);
+                var level = hm[1].length;
+                out.push('<h' + level + '>' + inline(esc(hm[2])) + '</h' + level + '>');
+                i++; continue;
+            }
+            if (/^(?:---+|___+|\*\*\*+)\s*$/.test(line)) {
+                para = flushPara(para);
+                out.push('<hr>');
+                i++; continue;
+            }
+            if (/^[-*+]\s/.test(line)) {
+                para = flushPara(para);
+                var ulItems = [];
+                while (i < lines.length && /^[-*+]\s/.test(lines[i])) {
+                    ulItems.push('<li>' + inline(esc(lines[i].replace(/^[-*+]\s+/, ''))) + '</li>');
+                    i++;
+                }
+                out.push('<ul>' + ulItems.join('') + '</ul>');
+                continue;
+            }
+            if (/^\d+\.\s/.test(line)) {
+                para = flushPara(para);
+                var olItems = [];
+                while (i < lines.length && /^\d+\.\s/.test(lines[i])) {
+                    olItems.push('<li>' + inline(esc(lines[i].replace(/^\d+\.\s+/, ''))) + '</li>');
+                    i++;
+                }
+                out.push('<ol>' + olItems.join('') + '</ol>');
+                continue;
+            }
+            if (/^\|/.test(line)) {
+                para = flushPara(para);
+                var tRows = [];
+                while (i < lines.length && /^\|/.test(lines[i])) { tRows.push(lines[i]); i++; }
+                var parseRow = function (r, tag) {
+                    return '<tr>' + r.replace(/^\||\|$/g, '').split('|').map(function (c) {
+                        return '<' + tag + '>' + inline(esc(c.trim())) + '</' + tag + '>';
+                    }).join('') + '</tr>';
+                };
+                var tableHtml = '<table><thead>' + parseRow(tRows[0], 'th') + '</thead>';
+                var bodyRows = tRows.slice(2);
+                if (bodyRows.length) {
+                    tableHtml += '<tbody>' + bodyRows.map(function (r) { return parseRow(r, 'td'); }).join('') + '</tbody>';
+                }
+                out.push(tableHtml + '</table>');
+                continue;
+            }
+            if (/^\s*$/.test(line)) { para = flushPara(para); i++; continue; }
+            para.push(line);
+            i++;
+        }
+        flushPara(para);
+        return out.join('\n');
+    }
+
     function updateNotesContent() {
         if (!notesPanel || !notesVisible) { return; }
-        // Load notes data if not yet loaded
         if (slideNotesData.length === 0) { loadNotesData(); }
         var header = notesPanel.querySelector('#marp-notes-header');
         var content = notesPanel.querySelector('#marp-notes-content');
         if (header) { header.textContent = 'Speaker Notes \u2014 Slide ' + (currentSlideIdx + 1); }
         if (!content) { return; }
-        content.textContent = (slideNotesData[currentSlideIdx] || '');
-        // Update left position based on sidebar
+        var rawNote = slideNotesData[currentSlideIdx] || '';
+        if (!rawNote) {
+            content.innerHTML = '';
+        } else {
+            try {
+                var rendered = renderMarkdown(rawNote);
+                content.innerHTML = rendered || '<pre>' + rawNote.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>';
+            } catch (e) {
+                content.innerHTML = '<pre>' + rawNote.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>';
+            }
+        }
         notesPanel.style.left = isVisible ? getSidebarWidth() + 'px' : '0';
     }
 
@@ -765,8 +905,9 @@
                 }
             }
             setTimeout(tryRestoreScroll, 0);
-            setTimeout(tryRestoreScroll, 100);
-            setTimeout(tryRestoreScroll, 350);
+            setTimeout(tryRestoreScroll, 200);
+            setTimeout(tryRestoreScroll, 500);
+            setTimeout(tryRestoreScroll, 1000);
         });
         var debounceTimer = null;
         observer = new MutationObserver(function (mutations) {

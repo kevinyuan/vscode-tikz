@@ -378,6 +378,13 @@ export function activate(context: vscode.ExtensionContext) {
           return tokens;
         };
         outputChannel.appendLine('[init] Installed tikz parse wrapper via setTimeout(0)');
+        // All extensions have now loaded. If Marp is present, trigger a re-render
+        // so tikz blocks that were shown as raw code (fence rule not yet installed
+        // during the very first parse) get processed on the next cycle.
+        if (findMarpSymbol()) {
+          outputChannel.appendLine('[init] Marp detected — scheduling post-load re-render');
+          scheduleBackgroundRender();
+        }
       }, 0);
 
       return md;

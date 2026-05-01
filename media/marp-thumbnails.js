@@ -881,8 +881,8 @@
     function init() {
         buildThumbnails();
         checkToggleSignal(); // Restore sidebar visibility if webview was recreated
-        // Retry a few times in case Marp hasn't rendered SVGs yet
-        var retries = [200, 500, 1000, 2000];
+        // Retry in case Marp SVGs aren't in the DOM yet when init() runs
+        var retries = [50, 200, 500, 1200];
         retries.forEach(function (delay) {
             setTimeout(function () { ensureMarpUI(); buildThumbnails(); checkToggleSignal(); }, delay);
         });
@@ -946,6 +946,8 @@
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', init);
     } else {
-        setTimeout(init, 500);
+        // DOM already loaded (tab switch / webview restore) — run immediately.
+        // Internal retries handle the case where Marp SVGs aren't in the DOM yet.
+        init();
     }
 })();

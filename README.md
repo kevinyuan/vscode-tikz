@@ -9,6 +9,8 @@ For Marp presentations, the extension also provides a **Slide Navigator** with t
 
 ## What's New (since v0.4.0)
 
+- **Speaker Notes Markdown** — Notes panel renders full Markdown: bold, italic, code, lists, tables, headings, links
+- **State Persistence** — Sidebar toggle, view mode, and notes panel state survive preview reloads and tab switches
 - **External File Include** — Reference TikZ files with `%!include` directive; auto-refreshes on file changes
 - **Editable PPTX Export** — One-click export of Marp slides with native math objects (OMML), not images
 - **Slide Navigator & Speaker Notes** — Thumbnail sidebar and live speaker notes panel for Marp decks
@@ -395,7 +397,7 @@ When previewing a Marp slide deck, a slide navigator appears in the preview pane
 
 - **Thumbnail sidebar**: Click the hamburger button (top-left) to open. Thumbnails stay synced with your scroll position.
 - **Three view modes**: Switch between small thumbnails, large thumbnails, and outline view using the toolbar icons.
-- **Speaker notes**: Toggle the notes panel from the toolbar to see speaker notes for the current slide. Notes are extracted from HTML comments in your Markdown (`<!-- Your notes here -->`). Use **TikZ: Toggle Speaker Notes Export** to control whether notes are included in PPTX export.
+- **Speaker notes**: Toggle the notes panel from the toolbar to see speaker notes for the current slide. Notes are extracted from HTML comments in your Markdown (`<!-- Your notes here -->`) and rendered as **full Markdown** — supporting bold, italic, inline code, lists, tables, headings, and links. Use **TikZ: Toggle Speaker Notes Export** to control whether notes are included in PPTX export.
 - **Click to navigate**: Click any thumbnail or outline item to smoothly scroll to that slide.
 - **Command palette**: Use `TikZ: Toggle Slide Thumbnails` to toggle the sidebar.
 

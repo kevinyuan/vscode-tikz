@@ -708,17 +708,34 @@
                     toggle.style.display = isVisible ? 'none' : 'flex';
                 }
                 document.body.style.marginLeft = isVisible ? getSidebarWidth() + 'px' : '0';
-                // Restore scroll if VS Code jumped to a different position during refresh
+            }, 0);
+            // Restore scroll if VS Code jumped to a different position during refresh.
+            // Attempt at multiple delays to beat VS Code's own scroll-sync timing.
+            function tryRestoreScroll() {
                 if (Math.abs(window.scrollY - scrollAnchorY) > 80) {
                     var allSlides = document.querySelectorAll('svg[data-marpit-svg]');
                     if (allSlides[scrollAnchorIdx]) {
                         allSlides[scrollAnchorIdx].scrollIntoView({ block: 'start', behavior: 'instant' });
                     }
                 }
-            }, 300);
+            }
+            setTimeout(tryRestoreScroll, 0);
+            setTimeout(tryRestoreScroll, 100);
+            setTimeout(tryRestoreScroll, 350);
         });
         var debounceTimer = null;
-        var observer = new MutationObserver(function () {
+        var observer = new MutationObserver(function (mutations) {
+            // Ignore mutations from our own UI elements (sidebar, notes panel, toolbar,
+            // toggle) — reacting to self-mutations causes an infinite rebuild loop
+            // that makes the thumbnail pane scroll in an endless cycle.
+            var hasExternalMutation = mutations.some(function (m) {
+                var t = m.target;
+                return (!sidebar || !sidebar.contains(t)) &&
+                       (!notesPanel || !notesPanel.contains(t)) &&
+                       (!toggle || !toggle.contains(t)) &&
+                       (!toolbar || !toolbar.contains(t));
+            });
+            if (!hasExternalMutation) { return; }
             clearTimeout(debounceTimer);
             debounceTimer = setTimeout(function () {
                 // Force content refresh so tikz SVGs update in thumbnails after rendering

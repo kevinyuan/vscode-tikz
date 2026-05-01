@@ -279,6 +279,12 @@ export function activate(context: vscode.ExtensionContext) {
         );
       };
 
+      // True after the fence rule has been installed at least once on any Marp
+      // renderer instance during this session. Used to fire a one-time
+      // background re-render so tikz blocks that rendered as raw code (before
+      // Marp's internal renderer was available on first load) get processed.
+      let fenceFirstInstalled = false;
+
       /** Install our tikz fence rule on Marp's internal renderer */
       const installFenceOnMarpInstance = (): void => {
         const sym = findMarpSymbol();
@@ -303,6 +309,13 @@ export function activate(context: vscode.ExtensionContext) {
           }
           return origFence(tokens, idx, options, env, self);
         };
+        // First install: tikz blocks in the just-completed parse were rendered
+        // as raw code (fence rule wasn't in place yet). Schedule a re-render so
+        // they get processed on the next markdown-it cycle.
+        if (!fenceFirstInstalled) {
+          fenceFirstInstalled = true;
+          scheduleBackgroundRender();
+        }
       };
 
       /** Reset per-render state and extract speaker notes from source */

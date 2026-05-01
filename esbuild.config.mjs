@@ -29,7 +29,7 @@ await esbuild.build({
     entryPoints: ['src/extension.ts'],
     bundle: true,
     outfile: 'dist/extension.js',
-    external: ['vscode'],
+    external: ['vscode', 'node-tikzjax'],
     format: 'cjs',
     platform: 'node',
     target: 'node18',

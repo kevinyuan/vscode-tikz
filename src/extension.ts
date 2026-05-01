@@ -31,6 +31,30 @@ let thumbToggleSeq = 0;
 let cachedSlideNotes: string[] = [];
 let notesInjected = false;
 
+/** Source line numbers for each slide separator, injected via tikz fence output */
+let cachedSlideLines: number[] = [];
+let slideLinesInjected = false;
+
+/** Return the 0-based source line number where each Marp slide starts.
+ *  Slide 0 starts after the frontmatter; subsequent slides start at each `---`. */
+function parseSlideLineNumbers(markdown: string): number[] {
+  const lines = markdown.split('\n');
+  const slideLines: number[] = [];
+  let inFrontmatter = false;
+  let frontmatterEnd = 0;
+
+  for (let i = 0; i < lines.length; i++) {
+    if (i === 0 && lines[i].trim() === '---') { inFrontmatter = true; continue; }
+    if (inFrontmatter && lines[i].trim() === '---') { frontmatterEnd = i; break; }
+  }
+
+  slideLines.push(frontmatterEnd + 1); // first slide starts after frontmatter
+  for (let i = frontmatterEnd + 1; i < lines.length; i++) {
+    if (lines[i].trim() === '---') { slideLines.push(i); }
+  }
+  return slideLines;
+}
+
 /** Parse Marp speaker notes from markdown source.
  *  Notes are HTML comments (<!-- ... -->) within each slide. */
 function parseSpeakerNotes(markdown: string): string[] {
@@ -222,6 +246,12 @@ export function activate(context: vscode.ExtensionContext) {
       const notesJson = JSON.stringify(cachedSlideNotes).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
       signalHtml += `<div data-marp-slide-notes='${notesJson.replace(/'/g, '&#39;')}' style="display:none"></div>`;
     }
+    // Inject slide line numbers once per render cycle (enables preview→editor scroll sync)
+    if (!slideLinesInjected && cachedSlideLines.length > 1) {
+      slideLinesInjected = true;
+      const linesJson = JSON.stringify(cachedSlideLines).replace(/</g, '\\u003c').replace(/>/g, '\\u003e');
+      signalHtml += `<div data-marp-slide-lines='${linesJson.replace(/'/g, '&#39;')}' style="display:none"></div>`;
+    }
 
     if (result?.svg) {
       outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → cached SVG`);
@@ -318,10 +348,12 @@ export function activate(context: vscode.ExtensionContext) {
         }
       };
 
-      /** Reset per-render state and extract speaker notes from source */
+      /** Reset per-render state and extract speaker notes + slide line numbers from source */
       const prepareRender = (src: string): void => {
         notesInjected = false;
+        slideLinesInjected = false;
         cachedSlideNotes = parseSpeakerNotes(src);
+        cachedSlideLines = parseSlideLineNumbers(src);
       };
 
       // Wrap md.parse synchronously (handles case where we load after Marp)

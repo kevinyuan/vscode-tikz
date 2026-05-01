@@ -22,6 +22,8 @@
         return 150;
     })();
     var currentSlideIdx = 0;
+    var slideLineNumbers = []; // Source line numbers for each slide (injected by extension)
+    var observer = null;       // MutationObserver instance (module-scoped so injectDataLineMarkers can pause it)
 
     // Key CSS properties to copy from computed styles
     var STYLE_PROPS = [
@@ -398,6 +400,8 @@
         sb.dataset.slideCount = String(slideCount);
         sb.dataset.viewMode = viewMode;
         loadNotesData();
+        loadSlideLineNumbers();
+        injectDataLineMarkers(slides);
         rebuildContent();
     }
 
@@ -653,6 +657,47 @@
         }
     }
 
+    /** Load slide source line numbers from data attribute injected by extension */
+    function loadSlideLineNumbers() {
+        var el = document.querySelector('[data-marp-slide-lines]');
+        if (!el) { return; }
+        try {
+            slideLineNumbers = JSON.parse(el.getAttribute('data-marp-slide-lines'));
+        } catch (e) {
+            slideLineNumbers = [];
+        }
+    }
+
+    /**
+     * Inject zero-height data-line markers before each slide SVG so VS Code's
+     * built-in preview→editor scroll-sync can map the preview position to the
+     * correct --- separator line in the source.
+     * Temporarily disconnects the MutationObserver to avoid a rebuild loop.
+     */
+    function injectDataLineMarkers(slides) {
+        if (observer) { observer.disconnect(); }
+        try {
+            var stale = document.querySelectorAll('.marp-line-marker');
+            for (var i = 0; i < stale.length; i++) {
+                if (stale[i].parentNode) { stale[i].parentNode.removeChild(stale[i]); }
+            }
+            if (slideLineNumbers.length > 0) {
+                for (var si = 0; si < slides.length; si++) {
+                    var lineNo = slideLineNumbers[si];
+                    if (lineNo === undefined || !slides[si].parentNode) { continue; }
+                    var marker = document.createElement('div');
+                    marker.className = 'marp-line-marker';
+                    marker.setAttribute('data-line', String(lineNo));
+                    // Must remain in flow (not display:none) so VS Code can measure vertical position.
+                    marker.style.cssText = 'height:0;overflow:hidden;margin:0;padding:0;border:none;line-height:0;';
+                    slides[si].parentNode.insertBefore(marker, slides[si]);
+                }
+            }
+        } finally {
+            if (observer) { observer.observe(document.body, { childList: true, subtree: true }); }
+        }
+    }
+
     function updateNotesContent() {
         if (!notesPanel || !notesVisible) { return; }
         // Load notes data if not yet loaded
@@ -724,7 +769,7 @@
             setTimeout(tryRestoreScroll, 350);
         });
         var debounceTimer = null;
-        var observer = new MutationObserver(function (mutations) {
+        observer = new MutationObserver(function (mutations) {
             // Ignore mutations from our own UI elements (sidebar, notes panel, toolbar,
             // toggle) — reacting to self-mutations causes an infinite rebuild loop
             // that makes the thumbnail pane scroll in an endless cycle.

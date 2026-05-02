@@ -9,7 +9,7 @@ For Marp presentations, the extension also provides a **Slide Navigator** with t
 
 ## What's New (since v0.4.0)
 
-- **Keyboard Navigation** — Press ↑/↓ anywhere in the slide preview (or in the thumbnail/outline sidebar) to switch pages with smooth animation
+- **Keyboard Navigation** — Press ↑/↓ anywhere in the slide preview (or in the thumbnail/outline sidebar) to switch pages with smooth animation; centering accounts for the speaker notes panel height; last slide always fully visible above the notes panel
 - **Speaker Notes Markdown** — Notes panel renders full Markdown: bold, italic, code, lists, tables, headings, links
 - **State Persistence** — Sidebar toggle, view mode, and notes panel state survive preview reloads and tab switches
 - **Frontmatter & Notes Include** — Share YAML theme settings and speaker notes across files with `%!include`

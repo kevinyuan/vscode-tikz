@@ -31,6 +31,17 @@
     var slideLineNumbers = []; // Source line numbers for each slide (injected by extension)
     var observer = null;       // MutationObserver instance (module-scoped so injectDataLineMarkers can pause it)
     var windowKeyNavInstalled = false;
+    var bottomSpacer = null;
+
+    function setBottomSpacerHeight(h) {
+        if (!bottomSpacer || !document.body.contains(bottomSpacer)) {
+            bottomSpacer = document.createElement('div');
+            bottomSpacer.id = 'marp-bottom-spacer';
+            bottomSpacer.style.cssText = 'pointer-events:none;';
+            document.body.appendChild(bottomSpacer);
+        }
+        bottomSpacer.style.height = h > 0 ? h + 'px' : '0';
+    }
 
     // Key CSS properties to copy from computed styles
     var STYLE_PROPS = [
@@ -63,6 +74,10 @@
         var relTop = elRect.top - parentRect.top + startY;
         var relBottom = relTop + elRect.height;
         var viewH = container ? container.clientHeight : scrollParent.clientHeight;
+        // When scrolling main content, exclude fixed notes panel from visible height
+        if (!container && notesVisible && notesPanel && !notesPanel.classList.contains('collapsed')) {
+            viewH -= notesHeight;
+        }
         var targetY;
         if (block === 'center') {
             targetY = relTop - (viewH - elRect.height) / 2;
@@ -386,7 +401,7 @@
             ssSet(NOTES_VISIBLE_KEY, notesVisible);
             notesBtn.classList.toggle('active', notesVisible);
             if (notesPanel) { notesPanel.classList.toggle('collapsed', !notesVisible); }
-            document.body.style.marginBottom = notesVisible ? notesHeight + 'px' : '0';
+            setBottomSpacerHeight(notesVisible ? notesHeight : 0);
             if (notesVisible) {
                 updateNotesContent();
                 // Re-detect with new viewport size (notes panel changes visible area)
@@ -704,7 +719,7 @@
                 notesHeight = newH;
                 ssSet(NOTES_HEIGHT_KEY, notesHeight);
                 notesPanel.style.height = notesHeight + 'px';
-                document.body.style.marginBottom = notesHeight + 'px';
+                setBottomSpacerHeight(notesHeight);
                 detectAndHighlight();
             }
             function onUp() {
@@ -730,9 +745,7 @@
         document.body.appendChild(notesPanel);
         // Adjust left margin to match sidebar
         if (isVisible) { notesPanel.style.left = getSidebarWidth() + 'px'; }
-        if (notesVisible) {
-            document.body.style.marginBottom = notesHeight + 'px';
-        }
+        setBottomSpacerHeight(notesVisible ? notesHeight : 0);
     }
 
     var slideNotesData = []; // Populated from extension's injected JSON

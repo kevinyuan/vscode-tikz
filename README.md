@@ -187,12 +187,12 @@ The included content is inserted in-place; keys declared before or after the dir
 
 ### Shared Speaker Notes
 
-Use `<!-- %!include filename.md -->` as the full body of an HTML comment. The file content replaces the directive and is rendered as Markdown in the speaker notes panel:
+Add a `%!notes filename.md` line anywhere inside a slide (not inside a comment). The extension replaces it with a proper Marp speaker notes comment before rendering, so the notes panel displays the file content as Markdown:
 
 ````markdown
 # My Slide
 
-<!-- %!include notes/slide1.md -->
+%!notes notes/slide1.md
 ````
 
 `notes/slide1.md` can contain any Markdown:

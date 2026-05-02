@@ -2,13 +2,18 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 /**
- * Resolves %!include directives in Marp frontmatter and speaker notes.
+ * Resolves %!include / %!notes directives in Marp frontmatter and speaker notes.
  *
  * Frontmatter syntax (any line inside the YAML block):
  *   %!include _theme.yaml
  *
- * Speaker notes syntax (entire HTML comment body):
- *   <!-- %!include notes/slide1.md -->
+ * Speaker notes syntax (standalone line, NOT inside a comment):
+ *   %!notes notes/slide1.md
+ *
+ * Using a non-comment line avoids a VS Code TextMate grammar bug where the
+ * first <!-- is paired with the --> of the SECOND comment, greying out all
+ * markdown content in between.  The preprocessor converts %!notes to a proper
+ * <!-- content --> comment before Marp ever sees the source.
  *
  * File content is cached by absolute path with mtime+size validation, so
  * repeated parses are fast and edits are picked up without a manual refresh.
@@ -21,7 +26,8 @@ interface FileCacheEntry {
 }
 
 const FRONTMATTER_INCLUDE_LINE_RE = /^%!include\s+(.+)$/m;
-const NOTES_INCLUDE_RE = /<!--\s*%!include\s+(.+?)\s*-->/g;
+/** Matches a %!notes directive line (leading/trailing whitespace allowed). */
+const NOTES_DIRECTIVE_RE = /^[ \t]*%!notes[ \t]+(.+?)[ \t]*$/gm;
 
 export class MarkdownIncludeResolver {
     private readonly _cache = new Map<string, FileCacheEntry>();
@@ -102,9 +108,11 @@ export class MarkdownIncludeResolver {
     }
 
     _resolveNotes(src: string, baseDir: string): string {
-        if (!src.includes('%!include')) { return src; }
+        if (!src.includes('%!notes')) { return src; }
 
-        return src.replace(NOTES_INCLUDE_RE, (_, rawFile: string) => {
+        // Reset lastIndex before each use (regex is module-level with /g flag)
+        NOTES_DIRECTIVE_RE.lastIndex = 0;
+        return src.replace(NOTES_DIRECTIVE_RE, (_, rawFile: string) => {
             const filePath = this._resolveFilePath(rawFile.trim(), baseDir);
             this._trackedPaths.add(filePath);
             const content = this._readFile(filePath);

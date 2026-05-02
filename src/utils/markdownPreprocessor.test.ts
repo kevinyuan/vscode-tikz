@@ -87,42 +87,49 @@ describe('MarkdownIncludeResolver', () => {
     // ── Speaker notes include ─────────────────────────────────────────────
 
     describe('speaker notes include', () => {
-        it('replaces <!-- %!include --> with file content wrapped in comment', () => {
+        it('replaces %!notes line with file content wrapped in comment', () => {
             writeFile(tmpDir, 'notes/slide1.md', '# Note heading\nSome **bold** text.');
-            const src = `# Slide 1\n\n<!-- %!include notes/slide1.md -->\n\n---`;
+            const src = `# Slide 1\n\n%!notes notes/slide1.md\n\n---`;
             const out = resolver.resolve(src, tmpDir);
             expect(out).toContain('# Note heading');
             expect(out).toContain('**bold**');
-            expect(out).not.toContain('%!include');
+            expect(out).not.toContain('%!notes');
             expect(out).toMatch(/<!--[\s\S]*?-->/);
         });
 
-        it('resolves multiple notes includes independently', () => {
+        it('resolves multiple %!notes directives independently', () => {
             writeFile(tmpDir, 'a.md', 'Note A');
             writeFile(tmpDir, 'b.md', 'Note B');
-            const src = `# S1\n<!-- %!include a.md -->\n---\n# S2\n<!-- %!include b.md -->`;
+            const src = `# S1\n%!notes a.md\n---\n# S2\n%!notes b.md`;
             const out = resolver.resolve(src, tmpDir);
             expect(out).toContain('Note A');
             expect(out).toContain('Note B');
         });
 
         it('handles missing notes file with error comment', () => {
-            const src = `# Slide\n<!-- %!include missing.md -->`;
+            const src = `# Slide\n%!notes missing.md`;
             const out = resolver.resolve(src, tmpDir);
             expect(out).toContain('cannot include');
             expect(out).toMatch(/<!--.*-->/);
         });
 
-        it('leaves regular comments untouched', () => {
+        it('leaves regular HTML comments untouched', () => {
             const src = `# Slide\n<!-- This is a regular note -->`;
             expect(resolver.resolve(src, tmpDir)).toBe(src);
         });
 
-        it('ignores whitespace variation around directive', () => {
+        it('handles leading/trailing whitespace on directive line', () => {
             writeFile(tmpDir, 'note.md', 'My note content');
-            const src = `# Slide\n<!--  %!include  note.md  -->`;
+            const src = `# Slide\n  %!notes  note.md  `;
             const out = resolver.resolve(src, tmpDir);
             expect(out).toContain('My note content');
+        });
+
+        it('resolves relative subdirectory paths', () => {
+            writeFile(tmpDir, 'notes/deep.md', 'Deep note');
+            const src = `# Slide\n%!notes notes/deep.md`;
+            const out = resolver.resolve(src, tmpDir);
+            expect(out).toContain('Deep note');
         });
     });
 
@@ -132,7 +139,7 @@ describe('MarkdownIncludeResolver', () => {
         it('tracks all resolved include file paths', () => {
             writeFile(tmpDir, '_theme.yaml', 'theme: default');
             writeFile(tmpDir, 'notes.md', 'Note text');
-            const src = `---\nmarp: true\n%!include _theme.yaml\n---\n\n# Slide\n<!-- %!include notes.md -->`;
+            const src = `---\nmarp: true\n%!include _theme.yaml\n---\n\n# Slide\n%!notes notes.md`;
             resolver.resolve(src, tmpDir);
             const tracked = resolver.getTrackedPaths();
             expect(tracked.size).toBe(2);

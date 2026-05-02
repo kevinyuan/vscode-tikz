@@ -9,6 +9,7 @@ For Marp presentations, the extension also provides a **Slide Navigator** with t
 
 ## What's New (since v0.4.0)
 
+- **Keyboard Navigation** — Press ↑/↓ anywhere in the slide preview (or in the thumbnail/outline sidebar) to switch pages with smooth animation
 - **Speaker Notes Markdown** — Notes panel renders full Markdown: bold, italic, code, lists, tables, headings, links
 - **State Persistence** — Sidebar toggle, view mode, and notes panel state survive preview reloads and tab switches
 - **Frontmatter & Notes Include** — Share YAML theme settings and speaker notes across files with `%!include`
@@ -450,6 +451,7 @@ When previewing a Marp slide deck, a slide navigator appears in the preview pane
 - **Three view modes**: Switch between small thumbnails, large thumbnails, and outline view using the toolbar icons.
 - **Speaker notes**: Toggle the notes panel from the toolbar to see speaker notes for the current slide. Notes are extracted from HTML comments in your Markdown (`<!-- Your notes here -->`) and rendered as **full Markdown** — supporting bold, italic, inline code, lists, tables, headings, and links. Use **TikZ: Toggle Speaker Notes Export** to control whether notes are included in PPTX export.
 - **Click to navigate**: Click any thumbnail or outline item to smoothly scroll to that slide.
+- **Keyboard navigation**: Press ↑/↓ anywhere in the slide preview to switch pages with smooth animation. When focus is in the thumbnail/outline sidebar, ↑/↓ moves the selection without scrolling the sidebar itself.
 - **Command palette**: Use `TikZ: Toggle Slide Thumbnails` to toggle the sidebar.
 
 ## Export Marp Slides to Editable PPTX

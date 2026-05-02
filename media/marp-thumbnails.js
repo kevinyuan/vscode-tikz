@@ -30,6 +30,7 @@
     var currentSlideIdx = 0;
     var slideLineNumbers = []; // Source line numbers for each slide (injected by extension)
     var observer = null;       // MutationObserver instance (module-scoped so injectDataLineMarkers can pause it)
+    var windowKeyNavInstalled = false;
 
     // Key CSS properties to copy from computed styles
     var STYLE_PROPS = [
@@ -135,7 +136,7 @@
             '  overflow-y: auto; overflow-x: hidden; padding: 0 12px 8px;',
             '  box-sizing: border-box; background: var(--vscode-sideBar-background, rgba(37,37,38,0.97));',
             '  border-right: 1px solid var(--vscode-panel-border, rgba(128,128,128,0.35));',
-            '  z-index: 10000; scrollbar-width: thin;',
+            '  z-index: 10000; scrollbar-width: thin; outline: none;',
             '}',
             '#marp-thumb-sidebar.collapsed { display: none; }',
             '#marp-thumb-toggle {',
@@ -311,12 +312,36 @@
         document.body.appendChild(toggle);
     }
 
+    function navigateSlide(delta) {
+        if (!cachedSlides || cachedSlides.length === 0) { return; }
+        var newIdx = Math.max(0, Math.min(currentSlideIdx + delta, cachedSlides.length - 1));
+        if (newIdx === currentSlideIdx) { return; }
+        currentSlideIdx = newIdx;
+        if (sidebar) {
+            var sel = viewMode === 'outline' ? '.marp-outline-item' : '.marp-thumb';
+            var items = sidebar.querySelectorAll(sel);
+            for (var j = 0; j < items.length; j++) { items[j].classList.remove('active'); }
+            if (items[newIdx]) {
+                items[newIdx].classList.add('active');
+                smoothScrollTo(items[newIdx], sidebar, 'nearest');
+            }
+        }
+        smoothScrollTo(cachedSlides[newIdx], null, 'center');
+        updateNotesContent();
+    }
+
     function createSidebar() {
         if (sidebar && document.body.contains(sidebar)) { return sidebar; }
         sidebar = document.createElement('div');
         sidebar.id = 'marp-thumb-sidebar';
         if (!isVisible) { sidebar.classList.add('collapsed'); }
         sidebar.style.width = getSidebarWidth() + 'px';
+        sidebar.setAttribute('tabindex', '0');
+        sidebar.addEventListener('keydown', function (e) {
+            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') { return; }
+            e.preventDefault();
+            navigateSlide(e.key === 'ArrowDown' ? 1 : -1);
+        });
         document.body.appendChild(sidebar);
         // Restore body margin if visible
         document.body.style.marginLeft = isVisible ? getSidebarWidth() + 'px' : '0';
@@ -452,6 +477,7 @@
         loadSlideLineNumbers();
         injectDataLineMarkers(slides);
         rebuildContent();
+        setupWindowKeyboardNav();
     }
 
     function buildThumbContent(slides, sb) {
@@ -638,6 +664,22 @@
         window.addEventListener('scroll', trackingScrollListener, { passive: true });
         // Initial detection
         setTimeout(detectAndHighlight, 100);
+    }
+
+    function setupWindowKeyboardNav() {
+        if (windowKeyNavInstalled) { return; }
+        windowKeyNavInstalled = true;
+        window.addEventListener('keydown', function (e) {
+            if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') { return; }
+            // Sidebar handles its own arrow keys
+            if (sidebar && sidebar.contains(document.activeElement)) { return; }
+            // Skip interactive form elements
+            var tag = document.activeElement && document.activeElement.tagName;
+            if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') { return; }
+            if (!cachedSlides || cachedSlides.length === 0) { return; }
+            e.preventDefault();
+            navigateSlide(e.key === 'ArrowDown' ? 1 : -1);
+        });
     }
 
     function ensureNotesPanel() {

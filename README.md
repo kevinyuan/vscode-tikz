@@ -11,6 +11,7 @@ For Marp presentations, the extension also provides a **Slide Navigator** with t
 
 - **Speaker Notes Markdown** — Notes panel renders full Markdown: bold, italic, code, lists, tables, headings, links
 - **State Persistence** — Sidebar toggle, view mode, and notes panel state survive preview reloads and tab switches
+- **Frontmatter & Notes Include** — Share YAML theme settings and speaker notes across files with `%!include`
 - **External File Include** — Reference TikZ files with `%!include` directive; auto-refreshes on file changes
 - **Editable PPTX Export** — One-click export of Marp slides with native math objects (OMML), not images
 - **Slide Navigator & Speaker Notes** — Thumbnail sidebar and live speaker notes panel for Marp decks
@@ -157,6 +158,56 @@ The included file should contain complete TikZ code (with `\begin{document}` / `
 - **Per-file caching**: Unchanged files are not re-read or re-rendered
 
 This is especially useful for AI-assisted workflows — each diagram can be maintained independently in its own file.
+
+## Frontmatter & Speaker Notes Include
+
+Use `%!include` to share YAML theme configuration and speaker notes across multiple Marp files.
+
+### Shared Frontmatter
+
+Place `%!include filename.yaml` on any line inside the frontmatter block:
+
+````markdown
+---
+marp: true
+%!include _theme.yaml
+author: Alice
+---
+````
+
+`_theme.yaml` contains the YAML keys to merge:
+
+```yaml
+theme: default
+paginate: true
+backgroundColor: white
+```
+
+The included content is inserted in-place; keys declared before or after the directive are preserved. Multiple `%!include` lines are supported.
+
+### Shared Speaker Notes
+
+Use `<!-- %!include filename.md -->` as the full body of an HTML comment. The file content replaces the directive and is rendered as Markdown in the speaker notes panel:
+
+````markdown
+# My Slide
+
+<!-- %!include notes/slide1.md -->
+````
+
+`notes/slide1.md` can contain any Markdown:
+
+```markdown
+## Key points
+
+- Remember to mention the benchmark results
+- Audience question likely: *why not use approach X?*
+```
+
+Both include types:
+- Resolve **relative paths** from the Markdown file's directory
+- **Auto-refresh** the preview when the included file is saved
+- Use **mtime-based caching** — unchanged files are not re-read
 
 ## Usage
 

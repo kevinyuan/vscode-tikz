@@ -12,6 +12,7 @@ import { generateHash } from './utils/hash';
 import { extractAndReplaceMath, ExtractedMath } from './utils/mathPreprocessor';
 import { latexToOmml } from './utils/mathToOmml';
 import { injectMarpCjkFont } from './utils/marpCjkFont';
+import { MarkdownIncludeResolver } from './utils/markdownPreprocessor';
 
 
 let previewManager: PreviewManager | undefined;
@@ -22,6 +23,9 @@ let outputChannel: vscode.OutputChannel;
 
 /** Track the last known markdown document so we don't depend on activeTextEditor */
 let lastMarkdownDocument: vscode.TextDocument | undefined;
+
+/** Resolves %!include in frontmatter and speaker notes, with mtime-based caching. */
+const markdownIncludeResolver = new MarkdownIncludeResolver();
 
 /** Toggle state injected into preview via tikz fence output */
 let thumbPanelVisible = false;
@@ -343,11 +347,30 @@ export function activate(context: vscode.ExtensionContext) {
         cachedSlideLines = parseSlideLineNumbers(src);
       };
 
+      /**
+       * Resolve frontmatter/notes %!include directives, then run prepareRender.
+       * Returns the resolved source so it can be passed to the underlying parser.
+       */
+      const resolveAndPrepare = (src: string): string => {
+        const doc = findMarkdownDocument();
+        if (!doc) {
+          prepareRender(src);
+          return src;
+        }
+        const baseDir = path.dirname(doc.uri.fsPath);
+        markdownIncludeResolver.clearTracked();
+        const resolved = markdownIncludeResolver.resolve(src, baseDir);
+        prepareRender(resolved);
+        // Update file watchers after parse completes (deferred to avoid re-entrancy)
+        setTimeout(updateIncludeFileWatcher, 0);
+        return resolved;
+      };
+
       // Wrap md.parse synchronously (handles case where we load after Marp)
       const origParse = md.parse.bind(md);
       md.parse = function (src: string, env?: any) {
-        prepareRender(src);
-        const tokens = origParse(src, env);
+        const resolved = resolveAndPrepare(src);
+        const tokens = origParse(resolved, env);
         installFenceOnMarpInstance();
         return tokens;
       };
@@ -358,9 +381,9 @@ export function activate(context: vscode.ExtensionContext) {
       setTimeout(() => {
         const currentParse = md.parse;
         md.parse = function (src: string, env?: any) {
-          prepareRender(src);
+          const resolved = resolveAndPrepare(src);
           outputChannel.appendLine(`[parse-wrapper] src.length=${src.length}`);
-          const tokens = currentParse.call(md, src, env);
+          const tokens = currentParse.call(md, resolved, env);
           installFenceOnMarpInstance();
           return tokens;
         };
@@ -420,7 +443,11 @@ function updateIncludeFileWatcher(): void {
   const doc = findMarkdownDocument();
   if (!doc) { return; }
 
-  const currentPaths = documentParser.getIncludedFiles(doc.uri.toString());
+  // Merge tikz %!include paths and markdown (frontmatter/notes) %!include paths
+  const tikzPaths = documentParser.getIncludedFiles(doc.uri.toString());
+  const mdPaths = markdownIncludeResolver.getTrackedPaths();
+  const currentPaths = new Set([...tikzPaths, ...mdPaths]);
+
   outputChannel.appendLine(`[include-watch] update: ${currentPaths.size} included file(s)`);
   // Skip if the set of watched paths hasn't changed
   if (currentPaths.size === watchedIncludePaths.size &&
@@ -438,6 +465,7 @@ function updateIncludeFileWatcher(): void {
       const watcher = fs.watch(filePath, () => {
         outputChannel.appendLine(`[include-watch] File changed: ${filePath}`);
         documentParser!.includeResolver.invalidate(filePath);
+        markdownIncludeResolver.invalidate(filePath);
         // Debounce rapid changes (e.g. editor save writes multiple events)
         if (includeWatchDebounce) { clearTimeout(includeWatchDebounce); }
         includeWatchDebounce = setTimeout(() => {

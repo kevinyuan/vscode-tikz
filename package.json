@@ -85,7 +85,7 @@
       },
       {
         "command": "tikz.clearCache",
-        "title": "Clear TikZ Cache",
+        "title": "Clear TikZ Cache (All Workspaces)",
         "category": "TikZ",
         "when": "editorLangId == markdown"
       },

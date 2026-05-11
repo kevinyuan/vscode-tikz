@@ -857,8 +857,12 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
         }
         if (action !== 'Continue Anyway') { return; }
       }
-      let md = doc.getText();
+      let md = markdownIncludeResolver.resolve(doc.getText(), path.dirname(doc.uri.fsPath));
       const baseDir = path.dirname(doc.uri.fsPath);
+      // Save resolved (but not yet transformed) markdown for speaker-notes parsing.
+      // parseSpeakerNotes must see %!notes already converted to <!-- --> comments,
+      // and must not see tikz blocks replaced by img tags or CJK style injections.
+      const resolvedMdForNotes = md;
 
       // Find all tikz blocks. Each block captures:
       //   full:    the raw fence (used to locate-and-replace in md)
@@ -1019,7 +1023,7 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
 
           // Inject speaker notes
           if (exportNotes) {
-            const slideNotes = parseSpeakerNotes(doc.getText());
+            const slideNotes = parseSpeakerNotes(resolvedMdForNotes);
             if (slideNotes.some(n => n)) {
               progress.report({ message: 'Injecting speaker notes…' });
               try {
@@ -1811,10 +1815,12 @@ function buildNotesMasterXml(): string {
 </p:notesMaster>`;
 }
 
-function buildNotesMasterRelsXml(): string {
+function buildNotesMasterRelsXml(includeTheme: boolean): string {
+  const themeRel = includeTheme
+    ? '\n  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/>'
+    : '';
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme" Target="../theme/theme1.xml"/>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${themeRel}
 </Relationships>`;
 }
 
@@ -1850,7 +1856,11 @@ async function injectSpeakerNotes(pptxPath: string, notes: string[]): Promise<vo
   const hasMaster = !!zip.file('ppt/notesMasters/notesMaster1.xml');
   if (!hasMaster) {
     zip.file('ppt/notesMasters/notesMaster1.xml', buildNotesMasterXml());
-    zip.file('ppt/notesMasters/_rels/notesMaster1.xml.rels', buildNotesMasterRelsXml());
+    // Only reference the theme if it exists in this PPTX; non-editable Marp output
+    // (no LibreOffice) omits ppt/theme/theme1.xml, and PowerPoint refuses to open
+    // files that declare a relationship to a missing part.
+    const hasTheme1 = !!zip.file('ppt/theme/theme1.xml');
+    zip.file('ppt/notesMasters/_rels/notesMaster1.xml.rels', buildNotesMasterRelsXml(hasTheme1));
   }
 
   let contentTypesXml: string = await zip.file('[Content_Types].xml')!.async('string');

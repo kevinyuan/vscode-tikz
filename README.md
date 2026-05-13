@@ -1,6 +1,6 @@
 # TikZJax for VS Code
 
-[![Downloads](https://vsmarketplacebadges.dev/downloads-short/kevinyuan.vscode-tikzjax.svg)](https://marketplace.visualstudio.com/items?itemName=kevinyuan.vscode-tikzjax)
+[![VS Marketplace](https://vsmarketplacebadges.dev/downloads-short/kevinyuan.vscode-tikzjax.svg?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=kevinyuan.vscode-tikzjax)
 [![Open VSX Downloads](https://img.shields.io/open-vsx/dt/kevinyuan/vscode-tikzjax?label=Open%20VSX&logo=vscodium)](https://open-vsx.org/extension/kevinyuan/vscode-tikzjax)
 
 Also available for Obsidian: [![Obsidian Plugin](https://img.shields.io/badge/Obsidian-Marp%20TikZ-7c3aed?logo=obsidian)](https://github.com/kevinyuan/obsidian-marp-tikz)

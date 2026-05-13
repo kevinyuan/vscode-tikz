@@ -3,7 +3,7 @@
 [![VS Marketplace](https://vsmarketplacebadges.dev/installs-short/kevinyuan.vscode-tikzjax.svg?label=VS%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=kevinyuan.vscode-tikzjax)
 [![Open VSX Downloads](https://img.shields.io/open-vsx/dt/kevinyuan/vscode-tikzjax?label=Open%20VSX&logo=vscodium)](https://open-vsx.org/extension/kevinyuan/vscode-tikzjax)
 
-Also available for Obsidian: [![GitHub](https://img.shields.io/badge/GitHub-obsidian--marp--tikz-black?logo=github)](https://github.com/kevinyuan/obsidian-marp-tikz) [![Obsidian Plugin](https://img.shields.io/badge/Obsidian-Marp%20TikZ-7c3aed?logo=obsidian)](https://obsidian.md/plugins?id=obsidian-marp-tikz)
+Also available for Obsidian: [![GitHub](https://img.shields.io/badge/GitHub-obsidian--marp--tikz-black?logo=github)](https://github.com/kevinyuan/obsidian-marp-tikz) [![Obsidian Plugin](https://img.shields.io/badge/Obsidian-Marp%20TikZ-7c3aed?logo=obsidian)](https://obsidian.md/plugins?id=marp-tikz)
 
 Render precise and beautiful TikZ diagrams directly in your Markdown files. Create mathematical diagrams, circuit schematics, chemical structures, commutative diagrams, and more — all with live preview. Works with both standard Markdown preview and [Marp](https://marp.app/) slide decks, with one-click export to **editable PPTX**.
 

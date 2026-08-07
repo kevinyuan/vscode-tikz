@@ -133,15 +133,15 @@ export function activate(context: vscode.ExtensionContext) {
   outputChannel.appendLine('TikZJax extension activating...');
 
   documentParser = new DocumentParser();
-  cacheManager = new CacheManager(context.globalState);
-  // Clear stale persistent cache when preprocessing changes
-  const cacheVersion = context.globalState.get<number>('tikzjax.cacheVersion', 0);
-  if (cacheVersion < 4) {
-    cacheManager.clear().then(() => {
-      context.globalState.update('tikzjax.cacheVersion', 4);
-      outputChannel.appendLine('Cleared stale persistent cache (hash normalization v2)');
-    });
-  }
+
+  // Cached SVGs live as files under globalStorage. They used to live in
+  // globalState, which VS Code loads wholesale into memory at startup and which is
+  // meant for small values — a few hundred diagrams there is megabytes of startup
+  // cost on every window.
+  cacheManager = new CacheManager(path.join(context.globalStorageUri.fsPath, 'svg-cache'));
+  void migratePersistentCache(context, cacheManager);
+  context.subscriptions.push(new vscode.Disposable(() => { void cacheManager?.dispose(); }));
+
   configManager = new ConfigurationManager();
   const config = configManager.getConfiguration();
 
@@ -393,6 +393,39 @@ export function activate(context: vscode.ExtensionContext) {
       return md;
     }
   };
+}
+
+/** Bumped when the cache format or the hashing that feeds it changes. */
+const CACHE_VERSION = 5;
+
+/**
+ * Move the cache out of `globalState` and into files, once.
+ *
+ * The old keys must be removed whether or not their contents are worth keeping —
+ * left behind they are dead weight in `state.vscdb` that VS Code re-reads at every
+ * startup, forever.
+ */
+async function migratePersistentCache(
+  context: vscode.ExtensionContext,
+  cache: CacheManager
+): Promise<void> {
+  const previousVersion = context.globalState.get<number>('tikzjax.cacheVersion', 0);
+  if (previousVersion >= CACHE_VERSION) { return; }
+
+  try {
+    // Entries older than v4 predate a hash normalization change and would never be
+    // hit again, so they are dropped rather than imported.
+    const keepEntries = previousVersion >= 4;
+    const imported = await cache.migrateFromMemento(context.globalState, keepEntries);
+
+    await context.globalState.update('tikzjax.cacheVersion', CACHE_VERSION);
+    outputChannel.appendLine(
+      `[cache] Migrated persistent cache to globalStorage files ` +
+      `(imported ${imported} entr${imported === 1 ? 'y' : 'ies'}, keepEntries=${keepEntries})`
+    );
+  } catch (err: any) {
+    outputChannel.appendLine(`[cache] Migration failed: ${err?.message}`);
+  }
 }
 
 // ── Marp extension detection ──────────────────────────────────────────────

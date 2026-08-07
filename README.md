@@ -511,6 +511,15 @@ Use the **Retry** button or **Reset TikZJax Engine** command to recover from err
 - **Incremental Updates**: Only modified diagrams are re-rendered when you edit.
 - **Clear Cache**: Use the **Clear TikZ Cache** command if you need to force re-rendering.
 
+Cached SVGs are stored as files in the extension's global storage directory
+(`<VS Code user dir>/globalStorage/kevinyuan.vscode-tikzjax/svg-cache/`), shared across
+all workspaces and capped at 2000 diagrams / 64 MB with least-recently-used eviction.
+Deleting that folder is equivalent to **Clear TikZ Cache**.
+
+Diagrams are rendered in a separate worker process, so a diagram that hangs or takes
+too long cannot destabilise VS Code — it is killed at the **Render Timeout** and the
+engine restarts cleanly for the next one.
+
 ### Dark Mode
 
 The extension automatically adjusts diagram colors for dark themes. If you prefer original colors, disable this feature:

@@ -1,22 +1,17 @@
-import * as vscode from 'vscode';
-import { CacheManager } from './CacheManager';
+import * as fsp from 'fs/promises';
+import * as os from 'os';
+import * as path from 'path';
+import { CacheManager, LegacyStore } from './CacheManager';
 import { CacheEntry } from './CacheEntry';
 
 /**
- * Mock implementation of VS Code's Memento interface for testing
+ * Stand-in for the pre-0.4.39 `globalState` cache, used to exercise migration.
  */
-class MockMemento implements vscode.Memento {
-    private storage = new Map<string, any>();
+class MockLegacyStore implements LegacyStore {
+    readonly storage = new Map<string, any>();
 
-    keys(): readonly string[] {
-        return Array.from(this.storage.keys());
-    }
-
-    get<T>(key: string): T | undefined;
-    get<T>(key: string, defaultValue: T): T;
-    get<T>(key: string, defaultValue?: T): T | undefined {
-        const value = this.storage.get(key);
-        return value !== undefined ? value : defaultValue;
+    get<T>(key: string): T | undefined {
+        return this.storage.get(key);
     }
 
     async update(key: string, value: any): Promise<void> {
@@ -26,19 +21,20 @@ class MockMemento implements vscode.Memento {
             this.storage.set(key, value);
         }
     }
-
-    setKeysForSync(_keys: readonly string[]): void {
-        // Not needed for tests
-    }
 }
 
 describe('CacheManager', () => {
-    let mockGlobalState: MockMemento;
+    let cacheDir: string;
     let cacheManager: CacheManager;
 
-    beforeEach(() => {
-        mockGlobalState = new MockMemento();
-        cacheManager = new CacheManager(mockGlobalState);
+    beforeEach(async () => {
+        cacheDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'tikz-cache-test-'));
+        cacheManager = new CacheManager(cacheDir);
+    });
+
+    afterEach(async () => {
+        await cacheManager.dispose();
+        await fsp.rm(cacheDir, { recursive: true, force: true });
     });
 
     describe('set and get', () => {
@@ -397,5 +393,211 @@ describe('CacheManager', () => {
             expect(retrieved).toBeDefined();
             expect(retrieved!.hash).toBe(hash);
         });
+
+        it('should handle a hash containing path separators', async () => {
+            // Cache keys are arbitrary text; used directly they could escape the
+            // cache directory entirely.
+            const hash = '../../etc/passwd';
+            await cacheManager.set(hash, new CacheEntry(hash, '<svg>x</svg>'));
+
+            const retrieved = await cacheManager.get(hash);
+            expect(retrieved!.svg).toBe('<svg>x</svg>');
+
+            const written = await fsp.readdir(cacheDir);
+            expect(written.every(f => !f.includes('..') && !f.includes('/'))).toBe(true);
+        });
+
+        it('should keep distinct hashes in distinct files', async () => {
+            await cacheManager.set('hash1', new CacheEntry('hash1', '<svg>1</svg>'));
+            await cacheManager.set('hash2', new CacheEntry('hash2', '<svg>2</svg>'));
+
+            const svgFiles = (await fsp.readdir(cacheDir)).filter(f => f.endsWith('.svg'));
+            expect(svgFiles).toHaveLength(2);
+        });
+    });
+
+    describe('on-disk storage', () => {
+        it('should write SVGs as files, not into a single blob', async () => {
+            const svg = '<svg>persisted</svg>';
+            await cacheManager.set('hash1', new CacheEntry('hash1', svg));
+            await cacheManager.dispose();
+
+            const svgFiles = (await fsp.readdir(cacheDir)).filter(f => f.endsWith('.svg'));
+            expect(svgFiles).toHaveLength(1);
+
+            const contents = await fsp.readFile(path.join(cacheDir, svgFiles[0]), 'utf8');
+            expect(contents).toBe(svg);
+        });
+
+        it('should survive a restart', async () => {
+            await cacheManager.set('hash1', new CacheEntry('hash1', '<svg>1</svg>', 4242));
+            await cacheManager.dispose();
+
+            const reopened = new CacheManager(cacheDir);
+            const retrieved = await reopened.get('hash1');
+
+            expect(retrieved!.svg).toBe('<svg>1</svg>');
+            expect(retrieved!.timestamp).toBe(4242);
+            await reopened.dispose();
+        });
+
+        it('should create the cache directory if it does not exist', async () => {
+            const nested = path.join(cacheDir, 'does', 'not', 'exist');
+            const manager = new CacheManager(nested);
+
+            await manager.set('hash1', new CacheEntry('hash1', '<svg>1</svg>'));
+
+            expect((await manager.get('hash1'))!.svg).toBe('<svg>1</svg>');
+            await manager.dispose();
+        });
+
+        it('should report a miss when the SVG file is deleted behind its back', async () => {
+            await cacheManager.set('hash1', new CacheEntry('hash1', '<svg>1</svg>'));
+
+            const svgFiles = (await fsp.readdir(cacheDir)).filter(f => f.endsWith('.svg'));
+            await fsp.unlink(path.join(cacheDir, svgFiles[0]));
+
+            expect(await cacheManager.get('hash1')).toBeUndefined();
+            expect((await cacheManager.getStats()).entryCount).toBe(0);
+        });
+
+        it('should recover from a corrupt index instead of throwing', async () => {
+            await cacheManager.set('hash1', new CacheEntry('hash1', '<svg>1</svg>'));
+            await cacheManager.dispose();
+            await fsp.writeFile(path.join(cacheDir, 'index.json'), '{ not json', 'utf8');
+
+            const reopened = new CacheManager(cacheDir);
+            // The entry is unrecoverable, but the cache must still be usable.
+            expect(await reopened.get('hash1')).toBeUndefined();
+            await reopened.set('hash2', new CacheEntry('hash2', '<svg>2</svg>'));
+            expect((await reopened.get('hash2'))!.svg).toBe('<svg>2</svg>');
+            await reopened.dispose();
+        });
+
+        it('should delete unreachable files left by a crash', async () => {
+            // Filenames are one-way hashes of the key, so a file with no index
+            // record can never be looked up again.
+            await fsp.writeFile(path.join(cacheDir, 'deadbeef.svg'), '<svg>orphan</svg>', 'utf8');
+
+            const manager = new CacheManager(cacheDir);
+            await manager.getStats();
+
+            expect(await fsp.readdir(cacheDir)).not.toContain('deadbeef.svg');
+            await manager.dispose();
+        });
+
+        it('should remove files on clear, not just index rows', async () => {
+            await cacheManager.set('hash1', new CacheEntry('hash1', '<svg>1</svg>'));
+            await cacheManager.set('hash2', new CacheEntry('hash2', '<svg>2</svg>'));
+
+            await cacheManager.clear();
+
+            const svgFiles = (await fsp.readdir(cacheDir)).filter(f => f.endsWith('.svg'));
+            expect(svgFiles).toHaveLength(0);
+        });
+
+        it('should remove the file on invalidate', async () => {
+            await cacheManager.set('hash1', new CacheEntry('hash1', '<svg>1</svg>'));
+            await cacheManager.invalidate('hash1');
+
+            const svgFiles = (await fsp.readdir(cacheDir)).filter(f => f.endsWith('.svg'));
+            expect(svgFiles).toHaveLength(0);
+        });
+
+        it('should report total size from the bytes actually stored', async () => {
+            await cacheManager.set('hash1', new CacheEntry('hash1', '<svg>1</svg>'));
+            await cacheManager.set('hash2', new CacheEntry('hash2', '<svg>22</svg>'));
+
+            const stats = await cacheManager.getStats();
+            expect(stats.totalSize).toBe(
+                Buffer.byteLength('<svg>1</svg>') + Buffer.byteLength('<svg>22</svg>')
+            );
+        });
+    });
+
+    describe('migration from globalState', () => {
+        const LEGACY_INDEX_KEY = 'tikzjax.cache.index';
+
+        function seedLegacy(store: MockLegacyStore, hashes: string[]) {
+            store.storage.set(LEGACY_INDEX_KEY, hashes);
+            for (const hash of hashes) {
+                store.storage.set(`tikzjax.cache.${hash}`, {
+                    hash,
+                    svg: `<svg>${hash}</svg>`,
+                    timestamp: 1000,
+                    accessCount: 3,
+                });
+            }
+        }
+
+        it('should import entries and free the old globalState keys', async () => {
+            const store = new MockLegacyStore();
+            seedLegacy(store, ['hash1', 'hash2']);
+
+            const imported = await cacheManager.migrateFromMemento(store, true);
+
+            expect(imported).toBe(2);
+            expect((await cacheManager.get('hash1'))!.svg).toBe('<svg>hash1</svg>');
+            expect((await cacheManager.get('hash2'))!.timestamp).toBe(1000);
+            // The whole point: nothing may be left behind in globalState.
+            expect(store.storage.size).toBe(0);
+        });
+
+        it('should discard entries but still free the keys when asked', async () => {
+            const store = new MockLegacyStore();
+            seedLegacy(store, ['hash1', 'hash2']);
+
+            const imported = await cacheManager.migrateFromMemento(store, false);
+
+            expect(imported).toBe(0);
+            expect(await cacheManager.get('hash1')).toBeUndefined();
+            expect(store.storage.size).toBe(0);
+        });
+
+        it('should be a no-op with nothing to migrate', async () => {
+            const store = new MockLegacyStore();
+
+            await expect(cacheManager.migrateFromMemento(store, true)).resolves.toBe(0);
+        });
+
+        it('should skip entries whose payload is missing', async () => {
+            const store = new MockLegacyStore();
+            seedLegacy(store, ['hash1', 'hash2']);
+            store.storage.delete('tikzjax.cache.hash1');
+
+            const imported = await cacheManager.migrateFromMemento(store, true);
+
+            expect(imported).toBe(1);
+            expect(store.storage.size).toBe(0);
+        });
+    });
+
+    describe('eviction', () => {
+        it('should evict least-recently-used entries past the entry cap', async () => {
+            // MAX_ENTRIES is 2000; write past it and confirm the cap holds.
+            const manager = new CacheManager(cacheDir);
+            for (let i = 0; i < 2010; i++) {
+                await manager.set(`hash${i}`, new CacheEntry(`hash${i}`, `<svg>${i}</svg>`));
+            }
+
+            const stats = await manager.getStats();
+            expect(stats.entryCount).toBeLessThanOrEqual(2000);
+
+            // The most recent writes survive; the oldest do not.
+            expect(await manager.get('hash2009')).toBeDefined();
+            expect(await manager.get('hash0')).toBeUndefined();
+            await manager.dispose();
+        }, 60000);
+
+        it('should delete evicted files from disk', async () => {
+            const manager = new CacheManager(cacheDir);
+            for (let i = 0; i < 2010; i++) {
+                await manager.set(`hash${i}`, new CacheEntry(`hash${i}`, `<svg>${i}</svg>`));
+            }
+
+            const svgFiles = (await fsp.readdir(cacheDir)).filter(f => f.endsWith('.svg'));
+            expect(svgFiles.length).toBeLessThanOrEqual(2000);
+            await manager.dispose();
+        }, 60000);
     });
 });

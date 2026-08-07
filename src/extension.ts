@@ -13,6 +13,7 @@ import { extractAndReplaceMath, ExtractedMath } from './utils/mathPreprocessor';
 import { latexToOmml } from './utils/mathToOmml';
 import { injectMarpCjkFont } from './utils/marpCjkFont';
 import { MarkdownIncludeResolver } from './utils/markdownPreprocessor';
+import { installParseWrapper } from './utils/parseWrapper';
 
 
 let previewManager: PreviewManager | undefined;
@@ -20,6 +21,7 @@ let configManager: ConfigurationManager | undefined;
 let cacheManager: CacheManager | undefined;
 let documentParser: DocumentParser | undefined;
 let outputChannel: vscode.OutputChannel;
+let extensionContext: vscode.ExtensionContext | undefined;
 
 /** Track the last known markdown document so we don't depend on activeTextEditor */
 let lastMarkdownDocument: vscode.TextDocument | undefined;
@@ -127,6 +129,7 @@ function parseSpeakerNotes(markdown: string): string[] {
 
 export function activate(context: vscode.ExtensionContext) {
   outputChannel = vscode.window.createOutputChannel('TikZJax');
+  extensionContext = context;
   outputChannel.appendLine('TikZJax extension activating...');
 
   documentParser = new DocumentParser();
@@ -360,37 +363,27 @@ export function activate(context: vscode.ExtensionContext) {
         const baseDir = path.dirname(doc.uri.fsPath);
         markdownIncludeResolver.clearTracked();
         const resolved = markdownIncludeResolver.resolve(src, baseDir);
+        if (resolved !== src) { warnIfIncludeBreaksMarpTheme(src); }
         prepareRender(resolved);
         // Update file watchers after parse completes (deferred to avoid re-entrancy)
         setTimeout(updateIncludeFileWatcher, 0);
         return resolved;
       };
 
-      // Wrap md.parse synchronously (handles case where we load after Marp)
-      const origParse = md.parse.bind(md);
-      md.parse = function (src: string, env?: any) {
-        const resolved = resolveAndPrepare(src);
-        const tokens = origParse(resolved, env);
-        installFenceOnMarpInstance();
-        return tokens;
-      };
+      // Install our parse wrapper so it stays outermost no matter when Marp (or any
+      // other markdown-it contributor) loads. See parseWrapper.ts for why this is an
+      // accessor rather than a plain assignment.
+      installParseWrapper(md, {
+        transform: resolveAndPrepare,
+        afterParse: installFenceOnMarpInstance,
+        log: (msg) => outputChannel.appendLine(msg),
+      });
 
-      // Re-wrap after ALL extensions load using setTimeout(0).
-      // setTimeout(0) fires after all microtasks (including VS Code's
-      // async extension loading loop), so Marp's overwrite has completed.
+      outputChannel.appendLine('[init] Installed tikz parse wrapper (load-order independent)');
+
+      // Once all extensions have loaded, re-render if Marp is present so tikz blocks
+      // that were shown as raw code during the very first parse get processed.
       setTimeout(() => {
-        const currentParse = md.parse;
-        md.parse = function (src: string, env?: any) {
-          const resolved = resolveAndPrepare(src);
-          outputChannel.appendLine(`[parse-wrapper] src.length=${src.length}`);
-          const tokens = currentParse.call(md, resolved, env);
-          installFenceOnMarpInstance();
-          return tokens;
-        };
-        outputChannel.appendLine('[init] Installed tikz parse wrapper via setTimeout(0)');
-        // All extensions have now loaded. If Marp is present, trigger a re-render
-        // so tikz blocks that were shown as raw code (fence rule not yet installed
-        // during the very first parse) get processed on the next cycle.
         if (findMarpSymbol()) {
           outputChannel.appendLine('[init] Marp detected — scheduling post-load re-render');
           scheduleBackgroundRender();
@@ -400,6 +393,90 @@ export function activate(context: vscode.ExtensionContext) {
       return md;
     }
   };
+}
+
+// ── Marp extension detection ──────────────────────────────────────────────
+//
+// Marp is an OPTIONAL dependency, deliberately not declared in
+// `extensionDependencies`: plain Markdown TikZ rendering works without it, and
+// declaring it would force-install Marp on every user of this extension.
+// Instead we detect it at runtime and only speak up when the user actually opens
+// a document with Marp front matter.
+
+const MARP_EXTENSION_ID = 'marp-team.marp-vscode';
+const SUPPRESS_MARP_NOTICE_KEY = 'tikzjax.suppressMarpNotice';
+
+/** Set once per session so the notice can't nag on every editor switch. */
+let marpNoticeShownThisSession = false;
+
+function isMarpExtensionInstalled(): boolean {
+  return vscode.extensions.getExtension(MARP_EXTENSION_ID) !== undefined;
+}
+
+/**
+ * Tell the user that a Marp deck won't be laid out as slides without the Marp
+ * extension. TikZ blocks still render either way, so this is informational.
+ */
+function notifyIfMarpExtensionMissing(): void {
+  if (marpNoticeShownThisSession) { return; }
+  if (isMarpExtensionInstalled()) { return; }
+  if (extensionContext?.globalState.get<boolean>(SUPPRESS_MARP_NOTICE_KEY)) { return; }
+
+  marpNoticeShownThisSession = true;
+  outputChannel.appendLine('[marp-check] Marp front matter found but marp-team.marp-vscode is not installed');
+
+  const install = 'Install Marp for VS Code';
+  const dontShow = "Don't Show Again";
+
+  vscode.window.showInformationMessage(
+    'This file has Marp front matter, but the "Marp for VS Code" extension is not installed. ' +
+    'TikZ diagrams still render, but the preview will not be laid out as slides, and slide ' +
+    'navigation, thumbnails and speaker notes are unavailable.',
+    install, 'Not Now', dontShow
+  ).then(async (choice) => {
+    if (choice === install) {
+      await vscode.commands.executeCommand('workbench.extensions.installExtension', MARP_EXTENSION_ID);
+    } else if (choice === dontShow) {
+      await extensionContext?.globalState.update(SUPPRESS_MARP_NOTICE_KEY, true);
+    }
+  });
+}
+
+/** Warn once per session when %!include expansion can break Marp custom themes. */
+let includeThemeWarningShown = false;
+
+/**
+ * Marp resolves the base directory for workspace-relative custom themes by matching
+ * the source text it is handed against the text of open documents:
+ *
+ *   for (const d of workspace.textDocuments)
+ *     if (d.languageId === 'markdown' && d.getText() === src) return resolveBaseDirectoryForTheme(d)
+ *
+ * Because %!include / %!notes expand the source before Marp sees it, that match
+ * fails and workspace-relative themes stop loading. Only warn when the user
+ * actually has custom themes configured, so decks without them stay quiet.
+ */
+function warnIfIncludeBreaksMarpTheme(originalSrc: string): void {
+  if (includeThemeWarningShown) { return; }
+  if (!/^---[\s\S]*?marp:\s*true/m.test(originalSrc.slice(0, 500))) { return; }
+
+  const themes = vscode.workspace.getConfiguration('markdown.marp').get<string[]>('themes') ?? [];
+  const hasRelativeTheme = themes.some(t => !path.isAbsolute(t) && !/^https?:/i.test(t));
+  if (!hasRelativeTheme) { return; }
+
+  includeThemeWarningShown = true;
+  outputChannel.appendLine('[marp-theme] %!include expansion prevents Marp from resolving workspace-relative themes');
+
+  vscode.window.showWarningMessage(
+    'This deck uses %!include or %!notes together with a workspace-relative Marp theme. ' +
+    'Expanding the includes stops Marp from locating the theme directory, so your custom theme ' +
+    'may not apply. Use an absolute path in "markdown.marp.themes", or drop the front-matter include.',
+    'Open Setting'
+  ).then((choice) => {
+    if (choice === 'Open Setting') {
+      vscode.commands.executeCommand('workbench.action.openSettings', 'markdown.marp.themes');
+    }
+  });
 }
 
 /** Schedule a background render for the last known markdown document */
@@ -583,6 +660,9 @@ function updateMarpContext(doc: vscode.TextDocument | undefined): void {
   const head = doc.getText().slice(0, 500);
   const isMarp = /^---[\s\S]*?marp:\s*true/m.test(head);
   vscode.commands.executeCommand('setContext', 'tikz.isMarpFile', isMarp);
+
+  // Marp is optional; only mention it once the user opens something that needs it.
+  if (isMarp) { notifyIfMarpExtensionMissing(); }
 }
 
 /**
@@ -783,6 +863,13 @@ function runMarpCli(processedMdPath: string, outputPath: string, cwd: string, ti
         const msg = stderr?.trim() || error.message;
         if (error.killed || (error as any).code === 'ETIMEDOUT') {
           reject(new Error(`marp-cli timed out after ${timeoutMs / 1000}s`));
+        } else if ((error as any).code === 'ENOENT') {
+          // Export uses the marp-cli npm package, which is separate from the
+          // "Marp for VS Code" extension — installing the extension does not provide it.
+          reject(new Error(
+            'marp-cli was not found. Install it with "npm i -g @marp-team/marp-cli", ' +
+            'or make sure Node.js and npx are on your PATH.'
+          ));
         } else {
           reject(new Error(msg));
         }

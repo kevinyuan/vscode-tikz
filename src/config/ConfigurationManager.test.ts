@@ -58,6 +58,8 @@ describe('ConfigurationManager', () => {
                 renderTimeout: 15000,
                 autoPreview: false,
                 previewPosition: 'side',
+                marpPptxEditable: true,
+                marpPptxNotes: true,
             });
         });
 

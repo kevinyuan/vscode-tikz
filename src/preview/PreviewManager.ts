@@ -5,11 +5,41 @@ import { CacheEntry } from '../core/CacheEntry';
 import { ExtensionConfiguration } from '../config/ConfigurationManager';
 import { preprocessSource } from '../utils/preprocessor';
 import { postProcessSvg } from '../webview/svgPostProcessor';
+import {
+    TikzRenderer,
+    TikzRenderOptions,
+    RenderTimeoutError,
+    EngineCrashError,
+} from '../render/TikzRenderer';
+
+/** A memory-cache entry: either a rendered SVG or a recorded failure. */
+export interface SvgCacheValue {
+    svg?: string;
+    error?: string;
+    /** True while the failure is worth another attempt (timeout / engine crash). */
+    retryable?: boolean;
+    /** How many times this block has been attempted. */
+    attempts?: number;
+}
+
+/**
+ * Preview refreshes are throttled to at most one per this interval.
+ *
+ * Each refresh makes marp-vscode construct a brand-new Marp instance and
+ * re-register every custom theme for the whole deck, so refreshing per rendered
+ * block (as this used to) is O(blocks) full deck rebuilds.
+ */
+const NUDGE_THROTTLE_MS = 500;
+
+/** Attempts allowed for a retryable failure before it sticks. */
+const MAX_ATTEMPTS = 2;
 
 /**
  * Manages TikZ rendering for the built-in Markdown preview.
- * Uses a serialization lock to ensure only one tex2svg call runs at a time
- * (node-tikzjax WASM engine is single-threaded and cannot handle concurrency).
+ *
+ * Rendering is delegated to {@link TikzRenderer}, which owns a worker process and
+ * guarantees that only one TeX compile runs at a time (the WASM engine holds global
+ * mutable state and cannot tolerate concurrency).
  */
 export class PreviewManager {
     private readonly _parser: DocumentParser;
@@ -17,20 +47,28 @@ export class PreviewManager {
     private _config: ExtensionConfiguration;
     private readonly _disposables: vscode.Disposable[] = [];
 
-    private _tikzjaxLoaded = false;
-    private _tikzjaxLoadPromise: Promise<void> | null = null;
+    /** In-memory SVG cache: hash → value. Bounded, but never evicts a pinned hash. */
+    private readonly _svgCache = new Map<string, SvgCacheValue>();
+    private static readonly MAX_MEMORY_CACHE = 256;
 
-    /** In-memory SVG cache: hash → { svg?, error? }. Capped at MAX_MEMORY_CACHE entries (LRU). */
-    private readonly _svgCache = new Map<string, { svg?: string; error?: string }>();
-    private static readonly MAX_MEMORY_CACHE = 64;
+    /**
+     * Hashes belonging to the document currently being rendered.
+     *
+     * Eviction skips these. Without it, a deck with more blocks than the cache
+     * capacity evicts a block that the very next preview refresh asks for, which
+     * schedules another render, which evicts the next block — an unbounded loop
+     * of full deck re-renders.
+     */
+    private readonly _pinned = new Set<string>();
 
     private readonly _outputChannel: vscode.OutputChannel;
+    private readonly _renderer: TikzRenderer;
 
-    /** Serialization chain: all tex2svg calls are queued through this */
-    private _renderChain: Promise<void> = Promise.resolve();
-
-    /** Re-entrancy guard: prevents nudge-triggered doc changes from re-entering renderDocument */
+    /** Re-entrancy guard: prevents refresh-triggered renders from stacking up. */
     private _isRendering = false;
+
+    private _nudgeTimer: ReturnType<typeof setTimeout> | undefined;
+    private _nudgePending = false;
 
     constructor(
         _extensionUri: vscode.Uri,
@@ -42,12 +80,20 @@ export class PreviewManager {
         this._cacheManager = cacheManager;
         this._config = config;
         this._outputChannel = vscode.window.createOutputChannel('TikZJax Renderer');
+        this._renderer = new TikzRenderer((msg) => this._outputChannel.appendLine(msg));
     }
 
     // ── Public API ────────────────────────────────────────────
 
-    getSvg(hash: string): { svg?: string; error?: string } | undefined {
-        return this._svgCache.get(hash);
+    /** Look up a rendered block. Refreshes LRU recency. */
+    getSvg(hash: string): SvgCacheValue | undefined {
+        const value = this._svgCache.get(hash);
+        if (value !== undefined) {
+            // Re-insert so recency reflects actual use, not just insertion.
+            this._svgCache.delete(hash);
+            this._svgCache.set(hash, value);
+        }
+        return value;
     }
 
     clearMemoryCache(): void {
@@ -55,252 +101,238 @@ export class PreviewManager {
     }
 
     /**
-     * Render all TikZ blocks in a document. Blocks are rendered sequentially
-     * (serialized) to avoid corrupting the WASM TeX engine. After each block
-     * completes, the preview is nudged so diagrams appear one by one.
-     * A re-entrancy guard prevents nudge-triggered doc changes from starting
-     * a new render cycle.
+     * Render every TikZ block in a document.
+     *
+     * Blocks are rendered one at a time. The preview is refreshed on a throttle so
+     * diagrams still appear progressively without forcing a full Marp rebuild per
+     * block.
+     *
+     * @returns true if any block's cached result changed.
      */
-    async renderDocument(document: vscode.TextDocument): Promise<void> {
-        // Re-entrancy guard: if we're already rendering, skip
+    async renderDocument(document: vscode.TextDocument): Promise<boolean> {
         if (this._isRendering) {
             this._outputChannel.appendLine('renderDocument: skipped (already rendering)');
-            return;
+            return false;
         }
 
         const blocks = this._parser.parse(document);
-        if (blocks.length === 0) { return; }
+        if (blocks.length === 0) { return false; }
 
         this._isRendering = true;
         this._outputChannel.appendLine(`renderDocument: found ${blocks.length} tikz block(s)`);
 
+        // Pin this document's blocks so none of them can be evicted mid-pass.
+        this._pinned.clear();
+        for (const block of blocks) { this._pinned.add(block.hash); }
+
+        let changed = false;
+
         try {
-            let renderedCount = 0;
-
             for (const block of blocks) {
-                // Skip blocks already in memory cache
-                if (this._svgCache.has(block.hash)) {
-                    this._outputChannel.appendLine(`block ${block.hash.slice(0, 8)} — already cached`);
+                const existing = this._svgCache.get(block.hash);
+
+                if (existing && !this._shouldRetry(existing)) {
                     continue;
                 }
 
-                // Check persistent cache
-                const cached = await this._cacheManager.get(block.hash);
-                if (cached) {
-                    this._outputChannel.appendLine(`block ${block.hash.slice(0, 8)} — found in persistent cache`);
-                    const darkMode = this._isDarkMode();
-                    const processed = this._applyPostProcessing(cached.svg, darkMode);
-                    this._setSvgCache(block.hash, { svg: processed });
-                    renderedCount++;
-                    continue;
+                if (!existing) {
+                    // L2: persistent cache.
+                    const cached = await this._cacheManager.get(block.hash);
+                    if (cached) {
+                        this._outputChannel.appendLine(`block ${block.hash.slice(0, 8)} — persistent cache hit`);
+                        this._setSvgCache(block.hash, {
+                            svg: this._applyPostProcessing(cached.svg, this._isDarkMode()),
+                        });
+                        changed = true;
+                        continue;
+                    }
+                } else {
+                    this._outputChannel.appendLine(
+                        `block ${block.hash.slice(0, 8)} — retrying after ${existing.error?.slice(0, 60)}`
+                    );
                 }
 
-                // Render via node-tikzjax (serialized through the chain)
-                await this._renderSingleBlock(block.hash, block.source);
-                renderedCount++;
+                await this._renderSingleBlock(block.hash, block.source, existing?.attempts ?? 0);
+                changed = true;
 
-                // Nudge after each rendered block so it appears immediately
-                this._outputChannel.appendLine(`→ nudging after block ${block.hash.slice(0, 8)}`);
-                await this._nudgeDocument(document);
+                // Throttled, so a deck of fast blocks collapses into one refresh while
+                // slow blocks still surface one at a time.
+                this._scheduleNudge();
             }
 
-            this._outputChannel.appendLine(`renderDocument: done, rendered ${renderedCount} new block(s)`);
+            this._outputChannel.appendLine(`renderDocument: done (changed=${changed})`);
 
-            // Always nudge at end so speaker notes and other non-TikZ edits (which produce
-            // zero per-block nudges when all blocks are memory-cached) still refresh the preview.
-            await this._nudgeDocument(document);
+            if (changed) { this._flushNudge(); }
+            return changed;
         } finally {
+            this._pinned.clear();
             this._isRendering = false;
         }
     }
 
-    /**
-     * Retry rendering a single block by hash. Clears its cache entry first.
-     */
-    async retryBlock(hash: string, source: string, document: vscode.TextDocument): Promise<void> {
+    /** Force the Markdown preview to re-run markdown-it. */
+    refreshPreview(): void {
+        this._flushNudge(true);
+    }
+
+    /** Retry a single block by hash, clearing its cached result first. */
+    async retryBlock(hash: string, source: string, _document: vscode.TextDocument): Promise<void> {
         this._svgCache.delete(hash);
         await this._cacheManager.invalidate(hash);
-        await this._renderSingleBlock(hash, source);
-        await this._nudgeDocument(document);
+        await this._renderSingleBlock(hash, source, 0);
+        this._flushNudge(true);
     }
 
-    /**
-     * Render a single block, serialized through the render chain.
-     * Stores result (svg or error) in memory cache and persistent cache.
-     */
-    private async _renderSingleBlock(hash: string, source: string): Promise<void> {
-        // Chain this render after any currently running render
-        const renderPromise = this._renderChain.then(async () => {
-            this._outputChannel.appendLine(`block ${hash.slice(0, 8)} — rendering...`);
-            try {
-                const svg = await this._renderTikzToSvg(source);
-                const darkMode = this._isDarkMode();
-                const processed = this._applyPostProcessing(svg, darkMode);
-                this._setSvgCache(hash, { svg: processed });
-
-                // Persist to cache
-                const entry = new CacheEntry(hash, svg);
-                await this._cacheManager.set(hash, entry);
-
-                this._outputChannel.appendLine(`block ${hash.slice(0, 8)} — render OK`);
-            } catch (err: any) {
-                const errorMsg = this._extractTexError(err);
-                this._setSvgCache(hash, { error: errorMsg });
-                this._outputChannel.appendLine(`block ${hash.slice(0, 8)} — render FAILED: ${errorMsg.slice(0, 120)}`);
-            }
-        });
-
-        // Reset the chain to a resolved promise to avoid unbounded closure chain growth
-        this._renderChain = renderPromise.then(() => {}, () => {});
-
-        // Wait for this block's render to complete
-        await renderPromise;
+    /** Public render entry point for the export path. Serialized with preview renders. */
+    async renderTikzToSvg(source: string): Promise<string> {
+        return this._renderRaw(source);
     }
 
-    /**
-     * Set an entry in the in-memory SVG cache with LRU eviction.
-     */
-    private _setSvgCache(hash: string, value: { svg?: string; error?: string }): void {
-        // Delete first so re-insertion moves it to the end (Map preserves insertion order)
-        this._svgCache.delete(hash);
-        this._svgCache.set(hash, value);
+    // ── Rendering ─────────────────────────────────────────────
 
-        // Evict oldest entries if over capacity
-        while (this._svgCache.size > PreviewManager.MAX_MEMORY_CACHE) {
-            const oldest = this._svgCache.keys().next().value;
-            if (oldest !== undefined) {
-                this._svgCache.delete(oldest);
-            }
+    private async _renderSingleBlock(hash: string, source: string, priorAttempts: number): Promise<void> {
+        this._outputChannel.appendLine(`block ${hash.slice(0, 8)} — rendering...`);
+        try {
+            const svg = await this._renderRaw(source);
+            this._setSvgCache(hash, {
+                svg: this._applyPostProcessing(svg, this._isDarkMode()),
+            });
+            await this._cacheManager.set(hash, new CacheEntry(hash, svg));
+            this._outputChannel.appendLine(`block ${hash.slice(0, 8)} — render OK`);
+        } catch (err: any) {
+            const { message, retryable } = this._classifyError(err);
+            const attempts = priorAttempts + 1;
+            this._setSvgCache(hash, {
+                error: message,
+                retryable: retryable && attempts < MAX_ATTEMPTS,
+                attempts,
+            });
+            this._outputChannel.appendLine(
+                `block ${hash.slice(0, 8)} — render FAILED (attempt ${attempts}): ${message.slice(0, 120)}`
+            );
         }
     }
 
-    /**
-     * Public render method for export — serialized through the render chain.
-     */
-    async renderTikzToSvg(source: string): Promise<string> {
-        let result: string;
-        const renderPromise = this._renderChain.then(async () => {
-            result = await this._renderTikzToSvg(source);
-        });
-        this._renderChain = renderPromise.then(() => {}, () => {});
-        await renderPromise;
-        return result!;
-    }
-
-    /**
-     * Render TikZ source to SVG using node-tikzjax.
-     * Handles preprocessing, pgfplots compat downgrade, and timeout.
-     */
-    private async _renderTikzToSvg(source: string): Promise<string> {
-        await this._ensureTikzjaxLoaded();
-
-        const tex2svg = (await import('node-tikzjax')).default;
-
+    /** Preprocess and hand the source to the renderer. */
+    private async _renderRaw(source: string): Promise<string> {
         let processed = preprocessSource(source);
 
-        // Downgrade pgfplots compat to 1.16 max (node-tikzjax limitation)
+        // node-tikzjax ships an older pgfplots; anything above 1.16 errors out.
         processed = processed.replace(
             /\\pgfplotsset\s*\{\s*compat\s*=\s*[\d.]+\s*\}/,
             '\\pgfplotsset{compat=1.16}'
         );
 
-        const timeout = this._config.renderTimeout || 15000;
-
-        const svgPromise = tex2svg(processed, {
-            showConsole: false,
+        const opts: TikzRenderOptions = {
             texPackages: this._detectPackages(processed),
             tikzLibraries: this._detectTikzLibraries(processed).join(','),
-        });
+        };
 
-        let timer: ReturnType<typeof setTimeout>;
-        const timeoutPromise = new Promise<never>((_resolve, reject) => {
-            timer = setTimeout(() => reject(new Error(`Render timed out after ${timeout}ms`)), timeout);
-        });
+        return this._renderer.render(processed, opts, this._config.renderTimeout || 15000);
+    }
 
-        try {
-            const svg = await Promise.race([svgPromise, timeoutPromise]);
-            return svg;
-        } finally {
-            clearTimeout(timer!);
-        }
+    /** Should a previously failed block be attempted again? */
+    private _shouldRetry(value: SvgCacheValue): boolean {
+        return value.error !== undefined
+            && value.retryable === true
+            && (value.attempts ?? 0) < MAX_ATTEMPTS;
     }
 
     /**
-     * Detect \\usepackage directives and return as package map.
+     * Turn a render failure into a display message plus a retry decision.
+     *
+     * Only timeouts and engine crashes are retryable — those are environmental. A
+     * TeX compilation error is deterministic, so retrying just burns another compile.
      */
+    private _classifyError(err: any): { message: string; retryable: boolean } {
+        if (err instanceof RenderTimeoutError) {
+            return { message: err.message, retryable: true };
+        }
+        if (err instanceof EngineCrashError) {
+            return { message: err.message, retryable: true };
+        }
+
+        const msg = err?.message || String(err);
+
+        const texErrorMatch = msg.match(/!(.*?)(?:\n|$)/);
+        if (texErrorMatch) {
+            return { message: `TeX compilation failed: ${texErrorMatch[1].trim()}`, retryable: false };
+        }
+
+        return {
+            message: `TeX compilation failed. Check your LaTeX syntax.\n${msg.slice(0, 300)}`,
+            retryable: false,
+        };
+    }
+
+    /**
+     * Insert into the memory cache, evicting the least recently used *unpinned*
+     * entry when over capacity. Pinned hashes belong to the document being
+     * rendered and must survive, even if that pushes past the nominal cap.
+     */
+    private _setSvgCache(hash: string, value: SvgCacheValue): void {
+        this._svgCache.delete(hash);
+        this._svgCache.set(hash, value);
+
+        if (this._svgCache.size <= PreviewManager.MAX_MEMORY_CACHE) { return; }
+
+        for (const key of this._svgCache.keys()) {
+            if (this._svgCache.size <= PreviewManager.MAX_MEMORY_CACHE) { break; }
+            if (this._pinned.has(key)) { continue; }
+            this._svgCache.delete(key);
+        }
+    }
+
     private _detectPackages(source: string): Record<string, string> {
         const packages: Record<string, string> = {};
         const regex = /\\usepackage(?:\[([^\]]*)\])?\{([^}]+)\}/g;
         let match;
         while ((match = regex.exec(source)) !== null) {
-            const options = match[1] || '';
-            const pkgName = match[2].trim();
-            packages[pkgName] = options;
+            packages[match[2].trim()] = match[1] || '';
         }
         return packages;
     }
 
-    /**
-     * Detect \\usetikzlibrary directives.
-     */
     private _detectTikzLibraries(source: string): string[] {
         const libs: string[] = [];
         const regex = /\\usetikzlibrary\{([^}]+)\}/g;
         let match;
         while ((match = regex.exec(source)) !== null) {
-            const names = match[1].split(',').map(s => s.trim()).filter(Boolean);
-            libs.push(...names);
+            libs.push(...match[1].split(',').map(s => s.trim()).filter(Boolean));
         }
         return libs;
     }
 
-    /**
-     * Extract a human-readable error message from a TeX compilation error.
-     */
-    private _extractTexError(err: any): string {
-        const msg = err?.message || String(err);
+    // ── Preview refresh ───────────────────────────────────────
 
-        // Look for specific TeX error patterns
-        const texErrorMatch = msg.match(/!(.*?)(?:\n|$)/);
-        if (texErrorMatch) {
-            return `TeX compilation failed: ${texErrorMatch[1].trim()}`;
+    /**
+     * Request a preview refresh, throttled to one per {@link NUDGE_THROTTLE_MS}.
+     */
+    private _scheduleNudge(): void {
+        this._nudgePending = true;
+        if (this._nudgeTimer) { return; }
+
+        this._nudgeTimer = setTimeout(() => {
+            this._nudgeTimer = undefined;
+            if (this._nudgePending) {
+                this._nudgePending = false;
+                void vscode.commands.executeCommand('markdown.preview.refresh');
+            }
+        }, NUDGE_THROTTLE_MS);
+    }
+
+    /** Run any pending refresh now. With `force`, refresh even if none is pending. */
+    private _flushNudge(force = false): void {
+        if (this._nudgeTimer) {
+            clearTimeout(this._nudgeTimer);
+            this._nudgeTimer = undefined;
         }
-
-        if (msg.includes('timed out')) {
-            return msg;
+        if (this._nudgePending || force) {
+            this._nudgePending = false;
+            void vscode.commands.executeCommand('markdown.preview.refresh');
         }
-
-        return `TeX compilation failed. Check your LaTeX syntax.\n${msg.slice(0, 300)}`;
     }
 
-    /**
-     * Ensure node-tikzjax is loaded (one-time initialization).
-     */
-    private async _ensureTikzjaxLoaded(): Promise<void> {
-        if (this._tikzjaxLoaded) { return; }
-        if (this._tikzjaxLoadPromise) { return this._tikzjaxLoadPromise; }
-
-        this._tikzjaxLoadPromise = (async () => {
-            this._outputChannel.appendLine('Loading node-tikzjax...');
-            // Just importing triggers the WASM load
-            await import('node-tikzjax');
-            this._tikzjaxLoaded = true;
-            this._outputChannel.appendLine('node-tikzjax loaded');
-        })();
-
-        return this._tikzjaxLoadPromise;
-    }
-
-    /**
-     * Nudge the document to force the Markdown preview to re-render.
-     */
-    private async _nudgeDocument(_document: vscode.TextDocument): Promise<void> {
-        await vscode.commands.executeCommand('markdown.preview.refresh');
-    }
-
-    /**
-     * Apply SVG post-processing (optimization + dark mode color transform).
-     */
     private _applyPostProcessing(svg: string, darkMode: boolean): string {
         try {
             return postProcessSvg(svg, darkMode);
@@ -317,9 +349,7 @@ export class PreviewManager {
     // ── Commands / lifecycle ──────────────────────────────────
 
     async createOrShowPreview(document: vscode.TextDocument): Promise<void> {
-        // Open the built-in Markdown preview
         await vscode.commands.executeCommand('markdown.showPreviewToSide', document.uri);
-        // Trigger rendering
         await this.renderDocument(document);
     }
 
@@ -328,13 +358,14 @@ export class PreviewManager {
     }
 
     async resetEngine(): Promise<void> {
-        this._tikzjaxLoaded = false;
-        this._tikzjaxLoadPromise = null;
+        this._renderer.reset();
         this._svgCache.clear();
         this._outputChannel.appendLine('Engine reset');
     }
 
     dispose(): void {
+        if (this._nudgeTimer) { clearTimeout(this._nudgeTimer); }
+        this._renderer.dispose();
         for (const d of this._disposables) { d.dispose(); }
         this._disposables.length = 0;
         this._outputChannel.dispose();

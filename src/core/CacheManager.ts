@@ -28,8 +28,21 @@ export class CacheManager {
     private globalState: vscode.Memento;
 
     /**
+     * Access counts held in memory.
+     *
+     * Persisting these on every read would mean a `globalState` write — i.e. a
+     * `state.vscdb` write of the whole SVG payload — for every cache *hit*, on
+     * every render pass. The count is only bookkeeping, so it is kept in memory
+     * and flushed opportunistically when the entry is written anyway.
+     */
+    private readonly accessCounts = new Map<string, number>();
+
+    /** In-memory mirror of the persisted index, to avoid re-reading it per operation. */
+    private index: string[] | null = null;
+
+    /**
      * Creates a new CacheManager instance.
-     * 
+     *
      * @param globalState - VS Code's global state storage
      */
     constructor(globalState: vscode.Memento) {
@@ -38,44 +51,34 @@ export class CacheManager {
 
     /**
      * Retrieves a cached diagram by its content hash.
-     * 
+     *
+     * Read-only with respect to storage: the access count is tracked in memory.
+     *
      * @param hash - Content hash of the tikz source code
      * @returns The cached diagram entry, or undefined if not found
-     * 
+     *
      * **Validates: Requirement 6.2**
      */
     async get(hash: string): Promise<CacheEntry | undefined> {
-        const key = this.getCacheKey(hash);
-        const data = this.globalState.get<{
-            hash: string;
-            svg: string;
-            timestamp: number;
-            accessCount: number;
-        }>(key);
-
+        const data = this.read(hash);
         if (!data) {
             return undefined;
         }
 
-        const entry = new CacheEntry(
-            data.hash,
-            data.svg,
-            data.timestamp,
-            data.accessCount
-        );
+        const accessCount = (this.accessCounts.get(hash) ?? data.accessCount) + 1;
+        this.accessCounts.set(hash, accessCount);
 
-        // Touch the entry to track access
-        entry.touch();
+        return new CacheEntry(data.hash, data.svg, data.timestamp, accessCount);
+    }
 
-        // Update the access count in storage
-        await this.globalState.update(key, {
-            hash: entry.hash,
-            svg: entry.svg,
-            timestamp: entry.timestamp,
-            accessCount: entry.accessCount
-        });
-
-        return entry;
+    /** Raw storage read with no access-count side effect. */
+    private read(hash: string): {
+        hash: string;
+        svg: string;
+        timestamp: number;
+        accessCount: number;
+    } | undefined {
+        return this.globalState.get(this.getCacheKey(hash));
     }
 
     /**
@@ -89,12 +92,16 @@ export class CacheManager {
     async set(hash: string, diagram: CacheEntry): Promise<void> {
         const key = this.getCacheKey(hash);
 
+        // Flush any in-memory access count now that we're writing anyway.
+        const accessCount = Math.max(diagram.accessCount, this.accessCounts.get(hash) ?? 0);
+        this.accessCounts.set(hash, accessCount);
+
         // Store the cache entry
         await this.globalState.update(key, {
             hash: diagram.hash,
             svg: diagram.svg,
             timestamp: diagram.timestamp,
-            accessCount: diagram.accessCount
+            accessCount
         });
 
         // Update the cache index and evict oldest if over capacity
@@ -111,6 +118,7 @@ export class CacheManager {
      */
     async invalidate(hash: string): Promise<void> {
         const key = this.getCacheKey(hash);
+        this.accessCounts.delete(hash);
         await this.globalState.update(key, undefined);
         await this.removeFromIndex(hash);
     }
@@ -130,6 +138,8 @@ export class CacheManager {
         }
 
         // Clear the index
+        this.accessCounts.clear();
+        this.index = [];
         await this.globalState.update(CacheManager.CACHE_INDEX_KEY, undefined);
     }
 
@@ -143,10 +153,10 @@ export class CacheManager {
         let totalSize = 0;
 
         for (const hash of index) {
-            const entry = await this.get(hash);
-            if (entry) {
+            const data = this.read(hash);
+            if (data) {
                 // Approximate size: SVG string length + metadata overhead
-                totalSize += entry.svg.length + 100;
+                totalSize += data.svg.length + 100;
             }
         }
 
@@ -172,19 +182,27 @@ export class CacheManager {
      * @returns Array of cached hashes
      */
     private async getIndex(): Promise<string[]> {
-        return this.globalState.get<string[]>(CacheManager.CACHE_INDEX_KEY) || [];
+        if (this.index === null) {
+            this.index = this.globalState.get<string[]>(CacheManager.CACHE_INDEX_KEY) || [];
+        }
+        return this.index;
+    }
+
+    /** Persist the index and keep the in-memory mirror in sync. */
+    private async writeIndex(index: string[]): Promise<void> {
+        this.index = index;
+        await this.globalState.update(CacheManager.CACHE_INDEX_KEY, index);
     }
 
     /**
      * Adds a hash to the cache index.
-     * 
+     *
      * @param hash - Hash to add to the index
      */
     private async addToIndex(hash: string): Promise<void> {
         const index = await this.getIndex();
         if (!index.includes(hash)) {
-            index.push(hash);
-            await this.globalState.update(CacheManager.CACHE_INDEX_KEY, index);
+            await this.writeIndex([...index, hash]);
         }
     }
 
@@ -195,8 +213,8 @@ export class CacheManager {
      */
     private async removeFromIndex(hash: string): Promise<void> {
         const index = await this.getIndex();
-        const newIndex = index.filter(h => h !== hash);
-        await this.globalState.update(CacheManager.CACHE_INDEX_KEY, newIndex);
+        if (!index.includes(hash)) { return; }
+        await this.writeIndex(index.filter(h => h !== hash));
     }
 
     /**
@@ -210,10 +228,10 @@ export class CacheManager {
         const toEvict = index.slice(0, index.length - CacheManager.MAX_PERSISTENT_ENTRIES);
         for (const hash of toEvict) {
             const key = this.getCacheKey(hash);
+            this.accessCounts.delete(hash);
             await this.globalState.update(key, undefined);
         }
 
-        const newIndex = index.slice(index.length - CacheManager.MAX_PERSISTENT_ENTRIES);
-        await this.globalState.update(CacheManager.CACHE_INDEX_KEY, newIndex);
+        await this.writeIndex(index.slice(index.length - CacheManager.MAX_PERSISTENT_ENTRIES));
     }
 }

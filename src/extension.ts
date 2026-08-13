@@ -275,7 +275,14 @@ export function activate(context: vscode.ExtensionContext) {
       signalHtml += `<div data-marp-slide-lines='${linesJson.replace(/'/g, '&#39;')}' style="display:none"></div>`;
     }
 
-    if (result?.svg) {
+    if (result?.svgImg) {
+      // Self-contained data-URI <img>: an SVG loaded as an image is an isolated
+      // document carrying its own fonts, so it renders identically regardless of
+      // previewStyles injection, marp-vscode's stylesheet stripping, CSP
+      // font-src, or platform font handling. This is the mojibake-proof path.
+      outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → cached standalone SVG`);
+      return `<div class="tikz-diagram" style="text-align:center;margin:1em 0"><img src="${result.svgImg}" style="max-width:100%" alt="TikZ diagram"/></div>${signalHtml}\n`;
+    } else if (result?.svg) {
       outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → cached SVG`);
       return `<div class="tikz-diagram" style="text-align:center;margin:1em 0">${result.svg}</div>${signalHtml}\n`;
     } else if (result?.error) {

@@ -4,6 +4,8 @@ import { CacheManager } from '../core/CacheManager';
 import { CacheEntry } from '../core/CacheEntry';
 import { ExtensionConfiguration } from '../config/ConfigurationManager';
 import { preprocessSource } from '../utils/preprocessor';
+import { embedTexFonts } from '../utils/texFonts';
+import * as path from 'path';
 import { postProcessSvg } from '../webview/svgPostProcessor';
 import {
     TikzRenderer,
@@ -15,6 +17,16 @@ import {
 /** A memory-cache entry: either a rendered SVG or a recorded failure. */
 export interface SvgCacheValue {
     svg?: string;
+    /**
+     * Self-contained data-URI variant: the same SVG with every TeX font it uses
+     * embedded as data-URI @font-face rules and a white background, for use as
+     * `<img src>`. An SVG loaded through <img> is an isolated document, so it
+     * renders identically everywhere — independent of previewStyles injection,
+     * marp-vscode's stylesheet neutralization, page CSP font-src, and the host
+     * platform's font loading. This is the primary preview representation;
+     * `svg` remains as an inline fallback.
+     */
+    svgImg?: string;
     error?: string;
     /** True while the failure is worth another attempt (timeout / engine crash). */
     retryable?: boolean;
@@ -70,8 +82,11 @@ export class PreviewManager {
     private _nudgeTimer: ReturnType<typeof setTimeout> | undefined;
     private _nudgePending = false;
 
+    /** Directory holding the bundled BaKoMa TeX fonts, for data-URI embedding. */
+    private readonly _texFontDir: string;
+
     constructor(
-        _extensionUri: vscode.Uri,
+        extensionUri: vscode.Uri,
         parser: DocumentParser,
         cacheManager: CacheManager,
         config: ExtensionConfiguration
@@ -79,8 +94,27 @@ export class PreviewManager {
         this._parser = parser;
         this._cacheManager = cacheManager;
         this._config = config;
+        this._texFontDir = path.join(extensionUri.fsPath, 'media', 'tex-fonts', 'ttf');
         this._outputChannel = vscode.window.createOutputChannel('TikZJax Renderer');
         this._renderer = new TikzRenderer((msg) => this._outputChannel.appendLine(msg));
+    }
+
+    /**
+     * Build the self-contained <img>-ready data URI for a raw engine SVG:
+     * post-processed without the dark-mode transform (an isolated SVG document
+     * cannot resolve currentColor/var()), given a white background so it stays
+     * legible on dark editor themes, with every referenced TeX font embedded.
+     */
+    private _makeStandaloneDataUri(rawSvg: string): string | undefined {
+        try {
+            let standalone = postProcessSvg(rawSvg, false);
+            standalone = embedTexFonts(standalone, this._texFontDir);
+            standalone = standalone.replace(/(<svg[^>]*>)/, '$1<style>svg{background:#ffffff}</style>');
+            return 'data:image/svg+xml;base64,' + Buffer.from(standalone, 'utf8').toString('base64');
+        } catch (err: any) {
+            this._outputChannel.appendLine(`standalone svg build failed: ${err?.message}`);
+            return undefined;
+        }
     }
 
     // ── Public API ────────────────────────────────────────────
@@ -142,6 +176,7 @@ export class PreviewManager {
                         this._outputChannel.appendLine(`block ${block.hash.slice(0, 8)} — persistent cache hit`);
                         this._setSvgCache(block.hash, {
                             svg: this._applyPostProcessing(cached.svg, this._isDarkMode()),
+                            svgImg: this._makeStandaloneDataUri(cached.svg),
                         });
                         changed = true;
                         continue;
@@ -192,6 +227,7 @@ export class PreviewManager {
                     this._outputChannel.appendLine(`block ${hash.slice(0, 8)} — persistent cache hit (pending queue)`);
                     this._setSvgCache(hash, {
                         svg: this._applyPostProcessing(cached.svg, this._isDarkMode()),
+                        svgImg: this._makeStandaloneDataUri(cached.svg),
                     });
                     changed = true;
                     continue;
@@ -233,6 +269,7 @@ export class PreviewManager {
             const svg = await this._renderRaw(source);
             this._setSvgCache(hash, {
                 svg: this._applyPostProcessing(svg, this._isDarkMode()),
+                svgImg: this._makeStandaloneDataUri(svg),
             });
             await this._cacheManager.set(hash, new CacheEntry(hash, svg));
             this._outputChannel.appendLine(`block ${hash.slice(0, 8)} — render OK`);

@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import { generateHash } from '../utils/hash';
 
 interface SvgGetter {
-    (hash: string): { svg?: string; error?: string } | undefined;
+    (hash: string): { svg?: string; svgImg?: string; error?: string } | undefined;
 }
 
 /**
@@ -106,6 +106,11 @@ export class MarpSlideThumbnails implements vscode.WebviewViewProvider {
             (_match, source: string) => {
                 const hash = generateHash(source.trim());
                 const result = this._getSvg(hash);
+                if (result?.svgImg) {
+                    // Self-contained data-URI image: fonts embedded, immune to
+                    // any stylesheet handling in this webview.
+                    return `<div class="tikz-thumb"><img src="${result.svgImg}" style="max-width:100%"/></div>`;
+                }
                 if (result?.svg) {
                     // Wrap SVG in a div so Marp treats it as HTML content
                     return `<div class="tikz-thumb">${result.svg}</div>`;

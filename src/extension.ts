@@ -229,19 +229,27 @@ export function activate(context: vscode.ExtensionContext) {
    * Includes inline style fallbacks so output works inside Marp (which strips external CSS).
    */
   function renderTikzHtml(source: string): string {
-    // Resolve %!include directive if present
-    const doc = findMarkdownDocument();
-    if (doc && documentParser) {
-      const baseDir = path.dirname(doc.uri.fsPath);
-      const includeResult = documentParser.includeResolver.resolve(source, baseDir);
-      if (includeResult) {
+    // Resolve %!include directives. The fence renderer does not know which
+    // document its token came from, and the active editor may be a different
+    // markdown file entirely — so try every open markdown document's directory
+    // until one resolves. (A wrong guess here used to break both the include
+    // and, downstream, the background render of this block.)
+    if (documentParser) {
+      let includeError: { message: string } | undefined;
+      for (const doc of candidateMarkdownDocs()) {
+        const baseDir = path.dirname(doc.uri.fsPath);
+        const includeResult = documentParser.includeResolver.resolve(source, baseDir);
+        if (!includeResult) { includeError = undefined; break; } // no %!include present
         if (includeResult.ok) {
           source = includeResult.value.content;
-        } else {
-          // Return error HTML directly
-          const escaped = escapeHtml(includeResult.error.message);
-          return `<div class="tikz-diagram tikz-error" style="text-align:center;margin:1em 0;color:#c00"><div class="tikz-error-title">⚠ Include Error</div><pre class="tikz-error-message" style="white-space:pre-wrap">${escaped}</pre></div>\n`;
+          includeError = undefined;
+          break;
         }
+        includeError = includeResult.error;
+      }
+      if (includeError) {
+        const escaped = escapeHtml(includeError.message);
+        return `<div class="tikz-diagram tikz-error" style="text-align:center;margin:1em 0;color:#c00"><div class="tikz-error-title">⚠ Include Error</div><pre class="tikz-error-message" style="white-space:pre-wrap">${escaped}</pre></div>\n`;
       }
     }
 
@@ -275,7 +283,11 @@ export function activate(context: vscode.ExtensionContext) {
       const escaped = escapeHtml(result.error);
       return `<div class="tikz-diagram tikz-error" style="text-align:center;margin:1em 0;color:#c00"><div class="tikz-error-title">⚠ Rendering Error</div><pre class="tikz-error-message" style="white-space:pre-wrap">${escaped}</pre></div>${signalHtml}\n`;
     } else {
-      outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → not cached, triggering background render`);
+      outputChannel.appendLine(`[render] hash=${hash.slice(0, 8)} → not cached, queueing for background render`);
+      // Queue the exact resolved source. The background job renders this queue
+      // first, so the preview's blocks render even when a different markdown
+      // file is the active editor.
+      pendingBlockRenders.set(hash, source);
       scheduleBackgroundRender();
       return `<div class="tikz-diagram tikz-loading" style="text-align:center;margin:1em 0"><span class="tikz-spinner"></span> Rendering TikZ diagram…</div>${signalHtml}\n`;
     }
@@ -519,7 +531,30 @@ function warnIfIncludeBreaksMarpTheme(originalSrc: string): void {
   });
 }
 
-/** Schedule a background render for the last known markdown document */
+/**
+ * Blocks the fence renderer saw but found uncached: hash → resolved source.
+ * Drained by the background render before any document-based pass, so the
+ * preview's own blocks always render regardless of which editor has focus.
+ */
+const pendingBlockRenders = new Map<string, string>();
+
+/** Every open markdown document, most likely render target first, deduplicated. */
+function candidateMarkdownDocs(): vscode.TextDocument[] {
+  const docs: vscode.TextDocument[] = [];
+  const seen = new Set<string>();
+  const push = (d: vscode.TextDocument | undefined) => {
+    if (d && d.languageId === 'markdown' && !d.isClosed && !seen.has(d.uri.toString())) {
+      seen.add(d.uri.toString());
+      docs.push(d);
+    }
+  };
+  push(vscode.window.activeTextEditor?.document);
+  push(lastMarkdownDocument && !lastMarkdownDocument.isClosed ? lastMarkdownDocument : undefined);
+  for (const d of vscode.workspace.textDocuments) { push(d); }
+  return docs;
+}
+
+/** Schedule a background render for queued blocks and the last known markdown document */
 let bgRenderScheduled = false;
 function scheduleBackgroundRender(): void {
   if (bgRenderScheduled) { return; }
@@ -529,13 +564,27 @@ function scheduleBackgroundRender(): void {
   setTimeout(async () => {
     bgRenderScheduled = false;
 
+    if (!previewManager) {
+      outputChannel.appendLine('[bg-render] No preview manager');
+      return;
+    }
+
+    // 1) Blocks the preview explicitly asked for — no document guessing involved.
+    if (pendingBlockRenders.size > 0) {
+      const pending = Array.from(pendingBlockRenders, ([hash, source]) => ({ hash, source }));
+      pendingBlockRenders.clear();
+      outputChannel.appendLine(`[bg-render] Rendering ${pending.length} pending preview block(s)`);
+      try {
+        await previewManager.renderBlocks(pending);
+      } catch (err: any) {
+        outputChannel.appendLine(`[bg-render] Pending block render failed: ${err.message}`);
+      }
+    }
+
+    // 2) Document-based pass (covers editor-driven changes and include watching).
     const doc = findMarkdownDocument();
     if (!doc) {
       outputChannel.appendLine('[bg-render] No markdown document found');
-      return;
-    }
-    if (!previewManager) {
-      outputChannel.appendLine('[bg-render] No preview manager');
       return;
     }
 

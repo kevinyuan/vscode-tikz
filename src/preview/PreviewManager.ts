@@ -170,6 +170,43 @@ export class PreviewManager {
         }
     }
 
+    /**
+     * Render specific blocks captured by the fence renderer at preview time.
+     *
+     * The fence renderer is the only component that knows exactly which source
+     * the preview asked for. The document-based path guesses the target from
+     * editor focus, so when a different markdown file is active (notes, a
+     * scratch file), the preview's own uncached blocks were never rendered and
+     * spun forever. Blocks queued here are rendered verbatim, no guessing.
+     */
+    async renderBlocks(blocks: ReadonlyArray<{ hash: string; source: string }>): Promise<boolean> {
+        let changed = false;
+        for (const { hash, source } of blocks) {
+            const existing = this._svgCache.get(hash);
+            if (existing?.svg) { continue; }
+            if (existing && !this._shouldRetry(existing)) { continue; }
+
+            if (!existing) {
+                const cached = await this._cacheManager.get(hash);
+                if (cached) {
+                    this._outputChannel.appendLine(`block ${hash.slice(0, 8)} — persistent cache hit (pending queue)`);
+                    this._setSvgCache(hash, {
+                        svg: this._applyPostProcessing(cached.svg, this._isDarkMode()),
+                    });
+                    changed = true;
+                    continue;
+                }
+            }
+
+            await this._renderSingleBlock(hash, source, existing?.attempts ?? 0);
+            changed = true;
+            this._scheduleNudge();
+        }
+
+        if (changed) { this._flushNudge(); }
+        return changed;
+    }
+
     /** Force the Markdown preview to re-run markdown-it. */
     refreshPreview(): void {
         this._flushNudge(true);

@@ -63,6 +63,56 @@ function fixSvgDimensions(svg) {
     return result;
 }
 
+// TeX fonts are not Unicode-encoded: node-tikzjax emits glyphs at their TeX
+// font positions (\times as U+00A3, \sim as U+00BB, ...) tagged with families
+// like "cmsy7". The written .svg files are referenced via <img>, which loads
+// them as isolated documents that cannot reach any page-level fonts — so each
+// file must carry the fonts it uses as data URIs, or every math glyph renders
+// as mojibake (£, », °...) in the exported HTML/PDF/PPTX.
+const fontDataCache = new Map();
+
+function texFontDirs() {
+    return [
+        path.join(__dirname, 'media', 'tex-fonts', 'ttf'),
+        path.join(__dirname, 'node_modules', 'node-tikzjax', 'css', 'bakoma', 'ttf'),
+    ];
+}
+
+function loadFontData(family) {
+    if (fontDataCache.has(family)) return fontDataCache.get(family);
+    let data = null;
+    if (/^[A-Za-z0-9_-]+$/.test(family)) {
+        for (const dir of texFontDirs()) {
+            try {
+                data = fs.readFileSync(path.join(dir, `${family}.ttf`)).toString('base64');
+                break;
+            } catch { /* try next dir; non-TeX families (e.g. sans-serif) end up null */ }
+        }
+    }
+    fontDataCache.set(family, data);
+    return data;
+}
+
+function embedTexFonts(svg) {
+    const families = new Set();
+    for (const m of svg.matchAll(/font-family="([^"]+)"/g)) {
+        for (const part of m[1].split(',')) {
+            const name = part.trim().replace(/^['"]|['"]$/g, '');
+            if (name) families.add(name);
+        }
+    }
+    const faces = [];
+    for (const family of families) {
+        const data = loadFontData(family);
+        if (data) {
+            faces.push(`@font-face{font-family:'${family}';src:url('data:font/truetype;base64,${data}') format('truetype');}`);
+        }
+    }
+    if (faces.length === 0) return svg;
+    const styleBlock = `<defs><style type="text/css">${faces.join('')}</style></defs>`;
+    return svg.replace(/(<svg[^>]*>)/, `$1${styleBlock}`);
+}
+
 async function main() {
     const separatorIdx = process.argv.indexOf('--');
     const args = process.argv.slice(2, separatorIdx === -1 ? undefined : separatorIdx);
@@ -106,7 +156,7 @@ async function main() {
             try {
                 process.stdout.write(`  [${i + 1}/${blocks.length}] Rendering... `);
                 const svg = await renderTikzToSvg(block.source);
-                const fixed = fixSvgDimensions(svg);
+                const fixed = embedTexFonts(fixSvgDimensions(svg));
 
                 // Write SVG file next to the input markdown
                 const svgFile = path.join(imgDir, `tikz-${i + 1}.svg`);

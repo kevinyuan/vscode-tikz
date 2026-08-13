@@ -17,8 +17,10 @@ export class MarpSlideThumbnails implements vscode.WebviewViewProvider {
     private _document?: vscode.TextDocument;
     private _pendingUpdate?: ReturnType<typeof setTimeout>;
     private _getSvg: SvgGetter;
+    private readonly _extensionUri: vscode.Uri;
 
-    constructor(_extensionUri: vscode.Uri, getSvg: SvgGetter) {
+    constructor(extensionUri: vscode.Uri, getSvg: SvgGetter) {
+        this._extensionUri = extensionUri;
         this._getSvg = getSvg;
     }
 
@@ -132,6 +134,15 @@ export class MarpSlideThumbnails implements vscode.WebviewViewProvider {
     }
 
     private _getHtml(marpHtml: { slidesHtml: string[]; css: string }, slideLines: number[]): string {
+        // TikZ SVGs reference TeX fonts by name (e.g. cmss8) with no embedded
+        // glyphs; without these @font-face rules every math glyph falls back to
+        // a substitute font and renders as mojibake. The markdown preview gets
+        // the same stylesheet via markdown.previewStyles, but this panel builds
+        // its own document and must link it explicitly.
+        const texFontsCss = this._view
+            ? `<link rel="stylesheet" href="${this._view.webview.asWebviewUri(
+                vscode.Uri.joinPath(this._extensionUri, 'media', 'tex-fonts', 'tex-fonts.css'))}">`
+            : '';
         const thumbnails = marpHtml.slidesHtml.map((slideHtml, i) => {
             const line = slideLines[i] ?? 0;
             const num = i + 1;
@@ -146,6 +157,7 @@ export class MarpSlideThumbnails implements vscode.WebviewViewProvider {
         return `<!DOCTYPE html>
 <html>
 <head>
+${texFontsCss}
 <style>
     /* Marp's own styles */
     ${marpHtml.css}

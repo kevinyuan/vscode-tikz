@@ -130,6 +130,28 @@ export class PreviewManager {
         return value;
     }
 
+    /**
+     * Synchronous L1 + persistent-cache lookup for the fence renderer.
+     *
+     * The fence renderer runs inside markdown-it and cannot await, so without
+     * this, every session started with an empty memory cache showing spinners
+     * until a background render plus a preview refresh completed — a chain with
+     * several historical failure modes. With it, any block that has ever been
+     * rendered displays on the first pass.
+     */
+    getOrLoadSync(hash: string): SvgCacheValue | undefined {
+        const l1 = this.getSvg(hash);
+        if (l1) { return l1; }
+        const cached = this._cacheManager.getSync(hash);
+        if (!cached) { return undefined; }
+        const value: SvgCacheValue = {
+            svg: this._applyPostProcessing(cached.svg, this._isDarkMode()),
+            svgImg: this._makeStandaloneDataUri(cached.svg),
+        };
+        this._setSvgCache(hash, value);
+        return value;
+    }
+
     clearMemoryCache(): void {
         this._svgCache.clear();
     }

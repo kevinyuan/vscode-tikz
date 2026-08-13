@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import { CacheEntry } from './CacheEntry';
@@ -264,12 +265,64 @@ export class CacheManager {
         if (this.index) { return this.index; }
         if (!this.loading) {
             this.loading = this.loadIndex().then((index) => {
-                this.index = index;
+                // ensureIndexSync() may have adopted an index while we were
+                // loading; entries written through it must not be discarded.
+                if (!this.index) { this.index = index; }
                 this.loading = null;
-                return index;
+                return this.index;
             });
         }
         return this.loading;
+    }
+
+    /**
+     * Synchronous read path for the markdown-it fence renderer, which cannot
+     * await: with it, a block whose render is already persisted displays on the
+     * preview's *first* pass — no spinner, no background render, no refresh
+     * round-trip. Cold-starts the index from disk if the async loader has not
+     * finished; reconciliation stays the async loader's job.
+     */
+    getSync(hash: string): CacheEntry | undefined {
+        const index = this.ensureIndexSync();
+        if (!index) { return undefined; }
+        const record = index.get(hash);
+        if (!record) { return undefined; }
+        try {
+            const svg = fs.readFileSync(path.join(this.cacheDir, record.file), 'utf8');
+            record.accessCount++;
+            record.lastAccess = Date.now();
+            this.scheduleIndexFlush();
+            return new CacheEntry(record.hash, svg, record.timestamp, record.accessCount);
+        } catch {
+            return undefined;
+        }
+    }
+
+    private ensureIndexSync(): Map<string, IndexRecord> | null {
+        if (this.index) { return this.index; }
+        try {
+            const raw = fs.readFileSync(path.join(this.cacheDir, CacheManager.INDEX_FILE), 'utf8');
+            const parsed = JSON.parse(raw);
+            const index = new Map<string, IndexRecord>();
+            if (Array.isArray(parsed?.entries)) {
+                for (const r of parsed.entries as Partial<IndexRecord>[]) {
+                    if (typeof r?.hash === 'string' && typeof r?.file === 'string') {
+                        index.set(r.hash, {
+                            hash: r.hash,
+                            file: r.file,
+                            timestamp: typeof r.timestamp === 'number' ? r.timestamp : Date.now(),
+                            accessCount: typeof r.accessCount === 'number' ? r.accessCount : 0,
+                            lastAccess: typeof r.lastAccess === 'number' ? r.lastAccess : 0,
+                            size: typeof r.size === 'number' ? r.size : 0,
+                        });
+                    }
+                }
+            }
+            this.index = index;
+            return index;
+        } catch {
+            return null;
+        }
     }
 
     /**

@@ -254,7 +254,10 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     const hash = generateHash(source.trim());
-    const result = previewManager?.getSvg(hash);
+    // Synchronous lookup covering both the memory cache and the persistent
+    // cache: previously-rendered blocks display on the first markdown-it pass,
+    // with no spinner and no dependency on the background-render/refresh chain.
+    const result = previewManager?.getOrLoadSync(hash);
     outputChannel.appendLine(`[render] content length=${source.length} trimmed length=${source.trim().length} hash=${hash.slice(0, 8)}`);
 
     // Piggyback signals on tikz fence output (raw HTML, bypasses Marp's html sanitization)

@@ -14,6 +14,13 @@ import { latexToOmml } from './utils/mathToOmml';
 import { injectMarpCjkFont } from './utils/marpCjkFont';
 import { MarkdownIncludeResolver } from './utils/markdownPreprocessor';
 import { installParseWrapper } from './utils/parseWrapper';
+import { embedTexFonts } from './utils/texFonts';
+
+/** Directory holding the bundled BaKoMa TeX fonts (see scripts/sync-tex-fonts.js). */
+function texFontDir(): string {
+  const base = extensionContext?.extensionUri.fsPath ?? path.resolve(__dirname, '..');
+  return path.join(base, 'media', 'tex-fonts', 'ttf');
+}
 
 
 let previewManager: PreviewManager | undefined;
@@ -1031,7 +1038,10 @@ async function exportMarpPptx(doc: vscode.TextDocument): Promise<void> {
 
             try {
               const svg = await previewManager!.renderTikzToSvg(blocks[i].source);
-              const fixed = fixSvgDimensions(svg);
+              // Referenced below via <img>, which loads the SVG as an isolated
+              // document — it cannot use the page's fonts, so it must carry the
+              // TeX fonts itself or every glyph comes out as mojibake.
+              const fixed = embedTexFonts(fixSvgDimensions(svg), texFontDir());
               const svgFile = path.join(imgDir, `tikz-${i + 1}.svg`);
               fs.writeFileSync(svgFile, fixed, 'utf-8');
 

@@ -520,6 +520,25 @@ Diagrams are rendered in a separate worker process, so a diagram that hangs or t
 too long cannot destabilise VS Code — it is killed at the **Render Timeout** and the
 engine restarts cleanly for the next one.
 
+### Fonts
+
+TikZ output references TeX fonts (`cmr10`, `cmmi10`, `cmsy10`, …) by name rather than
+embedding glyph outlines, and those fonts are **not** Unicode-encoded — each character
+sits at its position in the font, not at its Unicode codepoint. `\alpha` is emitted as
+U+00AE, `\sum` as U+0050, `\leq` as U+2219. Without the real fonts loaded, a browser
+substitutes a fallback and renders those literally as `®`, `P`, `∙`.
+
+The extension therefore bundles the BaKoMa TeX fonts: the preview loads them as a
+stylesheet, and exported diagrams carry them embedded so each `.svg` renders correctly
+on its own. If diagram text ever looks like unrelated symbols, that is a font-loading
+problem, not a caching one — clearing the cache will not help, because the cached SVG
+is already correct.
+
+> **CJK inside `tikz` blocks is not supported.** The bundled TeX engine has no Chinese,
+> Japanese or Korean fonts, so a `tikz` block containing CJK characters fails to compile
+> rather than rendering. Put CJK text in the surrounding Markdown or Marp slide instead,
+> where it renders normally.
+
 ### Dark Mode
 
 The extension automatically adjusts diagram colors for dark themes. If you prefer original colors, disable this feature:

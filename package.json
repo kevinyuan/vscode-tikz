@@ -53,7 +53,8 @@
   "contributes": {
     "markdown.markdownItPlugins": true,
     "markdown.previewStyles": [
-      "./media/tikz-preview.css"
+      "./media/tikz-preview.css",
+      "./media/tex-fonts/tex-fonts.css"
     ],
     "markdown.previewScripts": [
       "./media/marp-thumbnails.js"
@@ -200,7 +201,7 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
+    "compile": "node scripts/sync-tex-fonts.js && tsc -p ./",
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile",
     "test": "jest",

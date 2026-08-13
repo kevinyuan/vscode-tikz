@@ -141,7 +141,7 @@ export class MarpSlideThumbnails implements vscode.WebviewViewProvider {
         // its own document and must link it explicitly.
         const texFontsCss = this._view
             ? `<link rel="stylesheet" href="${this._view.webview.asWebviewUri(
-                vscode.Uri.joinPath(this._extensionUri, 'media', 'tex-fonts', 'tex-fonts.css'))}">`
+                vscode.Uri.joinPath(this._extensionUri, 'media', 'tex-fonts', 'tex-fonts-marp-vscode.css'))}">`
             : '';
         const thumbnails = marpHtml.slidesHtml.map((slideHtml, i) => {
             const line = slideLines[i] ?? 0;

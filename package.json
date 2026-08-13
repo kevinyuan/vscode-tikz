@@ -54,7 +54,7 @@
     "markdown.markdownItPlugins": true,
     "markdown.previewStyles": [
       "./media/tikz-preview.css",
-      "./media/tex-fonts/tex-fonts.css"
+      "./media/tex-fonts/tex-fonts-marp-vscode.css"
     ],
     "markdown.previewScripts": [
       "./media/marp-thumbnails.js"

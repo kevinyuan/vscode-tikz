@@ -3,7 +3,7 @@ import * as path from 'path';
 import { collectFontFamilies, embedTexFonts, clearFontCache } from './texFonts';
 
 const FONT_DIR = path.resolve(__dirname, '..', '..', 'media', 'tex-fonts', 'ttf');
-const CSS_FILE = path.resolve(__dirname, '..', '..', 'media', 'tex-fonts', 'tex-fonts.css');
+const CSS_FILE = path.resolve(__dirname, '..', '..', 'media', 'tex-fonts', 'tex-fonts-marp-vscode.css');
 
 const svgWith = (body: string) =>
     `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10">${body}</svg>`;

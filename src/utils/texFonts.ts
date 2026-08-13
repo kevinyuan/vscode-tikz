@@ -16,7 +16,7 @@ import * as path from 'path';
  * appear literally, as `®`, `P`, `∙` — mojibake.
  *
  * In the Markdown preview the fonts are supplied page-wide by
- * `media/tex-fonts/tex-fonts.css`. That does not help exported diagrams: those
+ * `media/tex-fonts/tex-fonts-marp-vscode.css`. That does not help exported diagrams: those
  * are written as separate `.svg` files and referenced with `<img src="...">`,
  * and an SVG loaded as an image is an isolated document that cannot reach the
  * embedding page's fonts. Such a file has to carry its own fonts.
